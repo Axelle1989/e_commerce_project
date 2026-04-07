@@ -1,0 +1,5 @@
+{
+  "name": "CourseCharge - Livraison de Marché",
+  "description": "Application de livraison de courses en direct avec paiement direct aux livreurs et suivi GPS en temps réel.",
+  "requestFramePermissions": ["geolocation", "camera", "microphone"]
+}

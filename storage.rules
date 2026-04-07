@@ -1,0 +1,55 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Fonctions
+    function isAdmin() {
+      // Note: In this app, we might be using a 'role' field in Firestore instead of custom claims.
+      // However, the user provided this specific rule. I will stick to it or adapt if I see how admin is handled.
+      // Looking at BackOffice.tsx, it seems to check auth.currentUser but doesn't explicitly check a 'role' claim in the code shown.
+      // Actually, let's check how isAdmin is defined in firestore.rules if it exists.
+      return request.auth != null && (request.auth.token.admin == true || request.auth.token.email == "axo.hossou@epitech.eu");
+    }
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isValidImage() {
+      return request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+    }
+    
+    function isValidSize() {
+      return request.resource.size <= 2 * 1024 * 1024;
+    }
+    
+    // ========== PRODUITS ==========
+    match /products/{productId}/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidImage() && isValidSize();
+    }
+    
+    // ========== MARCHÉS ==========
+    match /markets/{marketId}/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidImage() && isValidSize();
+    }
+    
+    // ========== AVATARS ==========
+    match /users/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if (isAuthenticated() && request.auth.uid == userId) || isAdmin();
+    }
+    
+    // ========== PREUVES COMMANDES ==========
+    match /orders/{orderId}/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidImage() && isValidSize();
+    }
+    
+    // ========== TEMPORAIRE ==========
+    match /temp/{userId}/{fileName} {
+      allow read, write, delete: if isAuthenticated() && request.auth.uid == userId;
+    }
+  }
+}

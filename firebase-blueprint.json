@@ -1,0 +1,133 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information including role and validation status.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["client", "driver", "admin"] },
+        "status": { "type": "string", "enum": ["pending_validation", "active", "suspended", "pending_interview"] },
+        "nom": { "type": "string" },
+        "prenom": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "idCardPhotoUrl": { "type": "string" },
+        "rejectionReason": { "type": "string" },
+        "currentLocation": {
+          "type": "object",
+          "properties": {
+            "latitude": { "type": "number" },
+            "longitude": { "type": "number" }
+          }
+        },
+        "noteMoyenne": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "validatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A delivery order.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "quantity": { "type": "number" },
+              "proposedPricePerUnit": { "type": "number" },
+              "total": { "type": "number" }
+            }
+          }
+        },
+        "subTotal": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "deliveryFee": { "type": "number" },
+        "status": { "type": "string", "enum": ["awaiting_payment", "pending", "accepted", "at_market", "delivering", "delivered", "cancelled"] },
+        "userLocation": {
+          "type": "object",
+          "properties": {
+            "latitude": { "type": "number" },
+            "longitude": { "type": "number" },
+            "address": { "type": "string" }
+          }
+        },
+        "driverLocation": { "type": "object", "description": "Current driver location" },
+        "marketReachedLocation": { "type": "object", "description": "Location when driver reached market" },
+        "marketReachedAt": { "type": "string", "format": "date-time" },
+        "departureLocation": { "type": "object", "description": "Location when driver left market" },
+        "departureAt": { "type": "string", "format": "date-time" },
+        "deliveredLocation": { "type": "object", "description": "Location when order was delivered" },
+        "deliveredAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "items", "totalAmount", "status"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Rating and comment for a delivery.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "userId": { "type": "string" },
+        "note": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["orderId", "driverId", "userId", "note"]
+    },
+    "AdminNotification": {
+      "title": "AdminNotification",
+      "description": "Notifications for the admin dashboard.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["new_driver_request", "order_alert"] },
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "read", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "Delivery orders"
+    },
+    "reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Delivery reviews"
+    },
+    "admin_notifications/{notifId}": {
+      "schema": "AdminNotification",
+      "description": "Admin notifications"
+    },
+    "settings/{settingId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "fixedFee": { "type": "number" }
+        }
+      },
+      "description": "App settings"
+    }
+  }
+}
