@@ -15,6 +15,7 @@ import DriverOnboarding from './pages/DriverOnboarding';
 import BackOffice from './pages/BackOffice';
 import Login from './pages/Login';
 import Profile from './pages/Profile';
+import Landing from './pages/Landing';
 
 // Components
 import Layout from './components/Layout';
@@ -152,12 +153,11 @@ export default function App() {
         )} />
         
         <Route path="/" element={
-          <PrivateRoute user={user} loading={loading}>
-            {user?.role === 'admin' ? <Navigate to="/admin" /> :
-             user?.role === 'driver' ? (user.status === 'active' ? <Navigate to="/livreur" /> : <Navigate to="/onboarding" />) :
-             <Navigate to="/client" />
-            }
-          </PrivateRoute>
+          !user ? <Landing /> : (
+            user.role === 'admin' ? <Navigate to="/admin" /> :
+            user.role === 'driver' ? (user.status === 'active' ? <Navigate to="/livreur" /> : <Navigate to="/onboarding" />) :
+            <Navigate to="/client" />
+          )
         } />
 
         <Route element={<PrivateRoute user={user} loading={loading}><Layout user={user} /></PrivateRoute>}>

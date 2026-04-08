@@ -240,7 +240,7 @@ export default function BackOffice() {
       setUsers(users.filter(u => u.uid !== selectedDriver.uid));
       
       // Simulate email with reason
-      console.log(`Email de rejet envoyé à ${selectedDriver.email} avec le motif: ${rejectionReason}`);
+      alert(`Email de rejet envoyé à ${selectedDriver.email} avec le motif: ${rejectionReason}`);
       if (inviteLater) {
         console.log('Invitation à postuler plus tard incluse');
       }

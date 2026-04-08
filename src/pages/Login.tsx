@@ -77,6 +77,11 @@ export default function Login() {
     setError('');
     try {
       if (isRegister) {
+        if (password.length < 6) {
+          setError("Le mot de passe doit contenir au moins 6 caractères.");
+          setLoading(false);
+          return;
+        }
         const result = await createUserWithEmailAndPassword(auth, email, password);
         const user = result.user;
         const finalRole = email.toLowerCase() === 'axo.hossou@epitech.eu' ? 'admin' : role;

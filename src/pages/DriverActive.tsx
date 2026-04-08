@@ -76,6 +76,7 @@ export default function DriverActive() {
   const [pendingUploads, setPendingUploads] = useState<number>(0);
   const [showSkipJustification, setShowSkipJustification] = useState<number | null>(null);
   const [skipJustification, setSkipJustification] = useState('');
+  const [isFullscreenMap, setIsFullscreenMap] = useState(false);
   
   const { location, error: locationError, requestPermission, permissionStatus } = useLiveLocation(order?.status);
 
@@ -251,10 +252,10 @@ export default function DriverActive() {
       try {
         let finalFile: Blob | File = file;
         if (file.type.startsWith('image/')) {
-          finalFile = await compressImage(file, 500 * 1024);
+          finalFile = await compressImage(file, 300 * 1024); // 300KB limit
         } else if (file.type.startsWith('video/')) {
-          if (file.size > 5 * 1024 * 1024) {
-            alert("La vidéo est trop lourde (Max 5Mo).");
+          if (file.size > 2 * 1024 * 1024) { // 2MB limit
+            alert("La vidéo est trop lourde (Max 2Mo).");
             setPendingUploads(prev => prev - 1);
             setUploadingProof(false);
             clearTimeout(timeout);
@@ -316,10 +317,10 @@ export default function DriverActive() {
       try {
         let finalFile: Blob | File = file;
         if (type === 'photo') {
-          finalFile = await compressImage(file, 500 * 1024);
+          finalFile = await compressImage(file, 300 * 1024); // 300KB limit
         } else if (type === 'video') {
-          if (file.size > 5 * 1024 * 1024) {
-            alert("La vidéo est trop lourde (Max 5Mo).");
+          if (file.size > 2 * 1024 * 1024) { // 2MB limit
+            alert("La vidéo est trop lourde (Max 2Mo).");
             setPendingUploads(prev => prev - 1);
             setUploadingItemProof(null);
             clearTimeout(timeout);
@@ -544,7 +545,12 @@ export default function DriverActive() {
             {/* Left Column: Map & Status */}
             <div className="lg:col-span-2 space-y-10">
               {/* Map Card */}
-              <div className="bg-white rounded-[48px] border border-slate-100 shadow-xl overflow-hidden h-[400px] relative">
+              <div 
+                onClick={() => !isFullscreenMap && setIsFullscreenMap(true)}
+                className={`bg-white rounded-[48px] border border-slate-100 overflow-hidden relative transition-all duration-500 cursor-pointer ${
+                  isFullscreenMap ? 'fixed inset-0 z-[1200] rounded-none' : 'h-[250px] lg:h-[350px]'
+                }`}
+              >
                 <MapContainer 
                   center={[order.userLocation.latitude, order.userLocation.longitude]} 
                   zoom={14} 
@@ -567,6 +573,16 @@ export default function DriverActive() {
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Destination</p>
                     <p className="text-sm font-black text-slate-900 truncate max-w-[200px]">{order.userLocation.address}</p>
                   </div>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFullscreenMap(!isFullscreenMap);
+                    }}
+                    className="bg-white/90 backdrop-blur-md p-4 rounded-3xl shadow-xl pointer-events-auto border border-white text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-white transition-all"
+                  >
+                    <Navigation className="w-4 h-4" />
+                    {isFullscreenMap ? 'Réduire' : 'Agrandir la carte'}
+                  </button>
                 </div>
               </div>
 
@@ -683,7 +699,7 @@ export default function DriverActive() {
                                     className="w-20 h-20 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-400 hover:border-benin-red hover:text-benin-red transition-all"
                                   >
                                     <XCircle className="w-5 h-5" />
-                                    <span className="text-[8px] font-black uppercase">Sauter</span>
+                                    <span className="text-[8px] font-black uppercase text-center">Passer pour l'instant</span>
                                   </button>
                                 </div>
                               )}

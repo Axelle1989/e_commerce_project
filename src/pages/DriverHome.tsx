@@ -316,7 +316,7 @@ export default function DriverHome() {
   return (
     <div className="max-w-4xl mx-auto space-y-10 pb-20">
       {/* Tab Navigation */}
-      <div className="flex bg-white p-2 rounded-[32px] border border-slate-100 shadow-sm sticky top-4 z-50">
+      <div className="flex bg-white p-2 rounded-[32px] border border-slate-100 shadow-sm sticky top-4 z-[1100]">
         {[
           { id: 'missions', label: 'Missions', icon: Package },
           { id: 'gains', label: 'Gains', icon: Wallet },
@@ -410,7 +410,10 @@ export default function DriverHome() {
             </div>
 
             {viewMode === 'map' ? (
-              <div className="h-[600px] bg-white rounded-[40px] border border-slate-100 shadow-2xl overflow-hidden relative z-10">
+              <div 
+                onClick={() => setViewMode('map')}
+                className="h-[300px] md:h-[400px] bg-white rounded-[40px] border border-slate-100 overflow-hidden relative"
+              >
                 <MapContainer center={currentLocation ? [currentLocation.latitude, currentLocation.longitude] : [6.3654, 2.4183]} zoom={13} style={{ height: '100%', width: '100%' }}>
                   <TileLayer
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

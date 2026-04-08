@@ -210,7 +210,7 @@ export default function UserHome() {
       {/* Hero Section */}
       <section className="relative h-64 rounded-[40px] overflow-hidden shadow-2xl">
         <ImageWithFallback 
-          src="https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=1200" 
+          src={BENIN_IMAGES.hero.cotonou} 
           alt="Marché Bénin" 
           className="w-full h-full object-cover"
         />
@@ -258,7 +258,7 @@ export default function UserHome() {
             {
               title: "3. Livraison rapide",
               desc: "Un livreur accepte et vous livre à domicile.",
-              img: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&q=80&w=1200"
+              img: BENIN_IMAGES.delivery.zemidjan
             }
           ].map((step, i) => (
             <motion.div 
