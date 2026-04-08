@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, serverTimestamp, doc, getDoc, query, where, onSnapshot, limit } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, getDoc, query, where, onSnapshot, limit, getDocs } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { OrderItem, GeoPoint, Order } from '../types';
-import { ShoppingCart, Plus, Minus, Trash2, Package, ArrowRight, Info, AlertCircle, MapPin, Loader2, Bell } from 'lucide-react';
+import { ShoppingCart, Plus, Minus, Trash2, Package, ArrowRight, Info, AlertCircle, MapPin, Loader2, Bell, Pencil } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
+import ImageWithFallback from '../components/ImageWithFallback';
 import MapPicker from '../components/MapPicker';
+import { BENIN_IMAGES } from '../constants/images';
 
 export default function UserHome() {
   const [cart, setCart] = useState<OrderItem[]>(() => {
@@ -16,6 +18,16 @@ export default function UserHome() {
   const [deliveryLocation, setDeliveryLocation] = useState<GeoPoint | null>(null);
   const [deliveryFee, setDeliveryFee] = useState(500);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
+  const [units, setUnits] = useState<{ id: string, label: string }[]>([
+    { id: 'kg', label: 'kilo (kg)' },
+    { id: 'g', label: 'gramme (g)' },
+    { id: 'L', label: 'litre (L)' },
+    { id: 'tas', label: 'tas' },
+    { id: 'botte', label: 'botte' },
+    { id: 'pièce', label: 'pièce' },
+    { id: 'sac', label: 'sac' },
+    { id: 'douzaine', label: 'douzaine' }
+  ]);
   const navigate = useNavigate();
 
   // Persist cart
@@ -60,31 +72,61 @@ export default function UserHome() {
     fetchSettings();
   }, []);
 
+  // Fetch units
+  useEffect(() => {
+    const fetchUnits = async () => {
+      try {
+        const unitSnap = await getDocs(collection(db, 'units'));
+        if (!unitSnap.empty) {
+          setUnits(unitSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+        }
+      } catch (error) {
+        console.error('Error fetching units:', error);
+      }
+    };
+    fetchUnits();
+  }, []);
+
   // Form state for new item
   const [newItem, setNewItem] = useState({
     name: '',
     quantity: 1,
+    unit: '',
     proposedPricePerUnit: 100
   });
 
   const addItemToCart = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItem.name.trim() || newItem.proposedPricePerUnit < 25) return;
+    if (!newItem.name.trim() || newItem.proposedPricePerUnit < 25 || !newItem.unit) return;
 
     const item: OrderItem = {
       tempId: Math.random().toString(36).substr(2, 9),
       name: newItem.name.trim(),
       quantity: newItem.quantity,
+      unit: newItem.unit,
       proposedPricePerUnit: newItem.proposedPricePerUnit,
       total: newItem.quantity * newItem.proposedPricePerUnit
     };
 
     setCart(prev => [...prev, item]);
-    setNewItem({ name: '', quantity: 1, proposedPricePerUnit: 100 });
+    setNewItem({ name: '', quantity: 1, unit: '', proposedPricePerUnit: 100 });
   };
 
   const removeFromCart = (index: number) => {
     setCart(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const editCartItem = (index: number) => {
+    const item = cart[index];
+    setNewItem({
+      name: item.name,
+      quantity: item.quantity,
+      unit: item.unit,
+      proposedPricePerUnit: item.proposedPricePerUnit
+    });
+    removeFromCart(index);
+    // Scroll to form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const updateCartItemQuantity = (index: number, delta: number) => {
@@ -167,11 +209,10 @@ export default function UserHome() {
 
       {/* Hero Section */}
       <section className="relative h-64 rounded-[40px] overflow-hidden shadow-2xl">
-        <img 
-          src="https://images.unsplash.com/photo-1526367790999-0150786486a9?auto=format&fit=crop&q=80&w=1200" 
-          alt="Livraison" 
+        <ImageWithFallback 
+          src="https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=1200" 
+          alt="Marché Bénin" 
           className="w-full h-full object-cover"
-          referrerPolicy="no-referrer"
         />
         <div className="absolute inset-0 flex flex-col justify-center px-12 text-white space-y-4">
           <motion.h1 
@@ -207,17 +248,17 @@ export default function UserHome() {
             {
               title: "1. Listez vos articles",
               desc: "Saisissez ce dont vous avez besoin, même sans prix fixe.",
-              img: "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=800"
+              img: "https://images.unsplash.com/photo-1543083477-4f785aeafaa9?auto=format&fit=crop&q=80&w=800"
             },
             {
               title: "2. Proposez votre prix",
               desc: "Fixez un budget raisonnable pour vos articles.",
-              img: "https://images.unsplash.com/photo-1580519542036-c47de6196ba5?auto=format&fit=crop&q=80&w=800"
+              img: BENIN_IMAGES.gains.cash
             },
             {
               title: "3. Livraison rapide",
               desc: "Un livreur accepte et vous livre à domicile.",
-              img: "https://images.unsplash.com/photo-1526367790999-0150786486a9?auto=format&fit=crop&q=80&w=800"
+              img: "https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&q=80&w=1200"
             }
           ].map((step, i) => (
             <motion.div 
@@ -229,7 +270,11 @@ export default function UserHome() {
               className="bg-white rounded-[40px] overflow-hidden border border-slate-100 shadow-sm hover:shadow-xl transition-all group"
             >
               <div className="h-48 overflow-hidden">
-                <img src={step.img} alt={step.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                <ImageWithFallback 
+                  src={step.img} 
+                  alt={step.title} 
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                />
               </div>
               <div className="p-8 space-y-2">
                 <h3 className="font-black text-slate-900">{step.title}</h3>
@@ -254,15 +299,28 @@ export default function UserHome() {
             <div className="flex items-center gap-4">
               <div className="flex -space-x-4">
                 {[1, 2, 3, 4].map(i => (
-                  <img key={i} src={`https://i.pravatar.cc/100?img=${i+10}`} alt="" className="w-12 h-12 rounded-full border-4 border-slate-900 object-cover" />
+                  <ImageWithFallback 
+                    key={i} 
+                    src={`https://i.pravatar.cc/100?img=${i+10}&t=${Date.now()}`} 
+                    alt="" 
+                    className="w-12 h-12 rounded-full border-4 border-slate-900 object-cover" 
+                  />
                 ))}
               </div>
               <p className="text-white font-black text-sm">+2,000 clients</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
-            <img src="https://images.unsplash.com/photo-1533900298318-6b8da08a523e?auto=format&fit=crop&q=80&w=400" alt="" className="rounded-3xl h-40 w-full object-cover shadow-2xl" />
-            <img src="https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&q=80&w=400" alt="" className="rounded-3xl h-40 w-full object-cover shadow-2xl mt-8" />
+            <ImageWithFallback 
+              src={BENIN_IMAGES.market.dantokpa} 
+              alt="Marché Dantokpa" 
+              className="rounded-3xl h-40 w-full object-cover shadow-2xl" 
+            />
+            <ImageWithFallback 
+              src={BENIN_IMAGES.market.vendeuse} 
+              alt="Vendeuse Béninoise" 
+              className="rounded-3xl h-40 w-full object-cover shadow-2xl mt-8" 
+            />
           </div>
         </div>
       </section>
@@ -281,7 +339,47 @@ export default function UserHome() {
               </div>
             </div>
 
-            <form onSubmit={addItemToCart} className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Suggestions Section */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Suggestions du marché</h3>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                {[
+                  { name: 'Oignons rouges', unit: 'tas', price: 300, img: BENIN_IMAGES.products.onions },
+                  { name: 'Piments forts', unit: 'tas', price: 200, img: BENIN_IMAGES.products.peppers },
+                  { name: 'Gari (Manioc)', unit: 'sac', price: 2500, img: BENIN_IMAGES.products.gari },
+                  { name: 'Riz local', unit: 'sac', price: 15000, img: BENIN_IMAGES.products.rice },
+                  { name: 'Feuilles de légumes', unit: 'botte', price: 200, img: BENIN_IMAGES.products.leafyVegetables }
+                ].map((item, i) => (
+                  <motion.button
+                    key={i}
+                    whileHover={{ y: -5 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      setNewItem({
+                        name: item.name,
+                        quantity: 1,
+                        unit: item.unit,
+                        proposedPricePerUnit: item.price
+                      });
+                      window.scrollTo({ top: document.getElementById('add-item-form')?.offsetTop ? document.getElementById('add-item-form')!.offsetTop - 100 : 0, behavior: 'smooth' });
+                    }}
+                    className="bg-slate-50 p-4 rounded-3xl border border-slate-100 hover:border-benin-green/30 hover:bg-white transition-all text-left space-y-3 group"
+                  >
+                    <div className="aspect-square rounded-2xl overflow-hidden bg-white shadow-sm">
+                      <ImageWithFallback src={item.img} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                    </div>
+                    <div>
+                      <p className="font-black text-slate-900 text-xs truncate">{item.name}</p>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">{item.price} FCFA / {item.unit}</p>
+                    </div>
+                  </motion.button>
+                ))}
+              </div>
+            </div>
+
+            <form id="add-item-form" onSubmit={addItemToCart} className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-10 border-t border-slate-50">
               <div className="space-y-2 md:col-span-2">
                 <label className="text-sm font-black text-slate-400 uppercase tracking-widest">Nom de l'article (e.g. Tomates, Oignons, Riz)</label>
                 <input
@@ -295,19 +393,35 @@ export default function UserHome() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-black text-slate-400 uppercase tracking-widest">Quantité</label>
+                <label className="text-sm font-black text-slate-400 uppercase tracking-widest">Unité</label>
+                <select
+                  required
+                  value={newItem.unit}
+                  onChange={e => setNewItem(prev => ({ ...prev, unit: e.target.value }))}
+                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 font-bold text-slate-900 focus:border-benin-green focus:bg-white transition-all outline-none appearance-none"
+                >
+                  <option value="" disabled>Choisir l'unité</option>
+                  {units.map(u => (
+                    <option key={u.id} value={u.id}>{u.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-black text-slate-400 uppercase tracking-widest">Quantité ({newItem.unit})</label>
                 <input
                   type="number"
                   min="1"
+                  step="any"
                   required
                   value={newItem.quantity}
-                  onChange={e => setNewItem(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
+                  onChange={e => setNewItem(prev => ({ ...prev, quantity: parseFloat(e.target.value) || 1 }))}
                   className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 font-bold text-slate-900 focus:border-benin-green focus:bg-white transition-all outline-none"
                 />
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-black text-slate-400 uppercase tracking-widest">Prix proposé (par unité)</label>
+                <label className="text-sm font-black text-slate-400 uppercase tracking-widest">Prix proposé (par {newItem.unit})</label>
                 <div className="relative">
                   <input
                     type="number"
@@ -385,7 +499,9 @@ export default function UserHome() {
                     >
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-900 text-sm truncate">{item.name}</p>
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{item.proposedPricePerUnit} FCFA</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                          {item.quantity} {item.unit} x {item.proposedPricePerUnit} FCFA/{item.unit}
+                        </p>
                         <p className="text-xs font-black text-benin-green">{item.total} FCFA</p>
                       </div>
                       <div className="flex items-center gap-2 bg-white rounded-xl p-1 shadow-sm">
@@ -397,9 +513,14 @@ export default function UserHome() {
                           <Plus className="w-3 h-3 text-slate-400" />
                         </button>
                       </div>
-                      <button onClick={() => removeFromCart(index)} className="text-slate-300 hover:text-red-500 transition-colors">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex flex-col gap-2">
+                        <button onClick={() => editCartItem(index)} className="text-slate-300 hover:text-benin-green transition-colors">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => removeFromCart(index)} className="text-slate-300 hover:text-red-500 transition-colors">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </motion.div>
                   ))
                 )}

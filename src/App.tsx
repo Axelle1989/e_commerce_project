@@ -61,6 +61,15 @@ export default function App() {
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | null = null;
+    
+    // Safety timeout to prevent infinite loading
+    const loadingTimeout = setTimeout(() => {
+      if (loading) {
+        console.warn('App loading timeout reached');
+        setLoading(false);
+      }
+    }, 8000);
+
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
       if (unsubscribeProfile) {
         unsubscribeProfile();
@@ -68,6 +77,8 @@ export default function App() {
       }
 
       if (firebaseUser) {
+        // Immediately set a minimal user to allow some UI to render if needed
+        // but keep loading true until we get the profile or timeout
         unsubscribeProfile = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
@@ -75,12 +86,15 @@ export default function App() {
             const role = data.role || (isDefaultAdmin ? 'admin' : 'client');
             
             if (isDefaultAdmin && data.role !== 'admin') {
-              updateDoc(doc(db, 'users', firebaseUser.uid), { role: 'admin' }).catch(e => handleFirestoreError(e, OperationType.UPDATE, `users/${firebaseUser.uid}`));
+              updateDoc(doc(db, 'users', firebaseUser.uid), { role: 'admin' }).catch(e => {
+                console.error('Error updating admin role:', e);
+              });
               setUser({ uid: docSnap.id, ...data, role: 'admin' } as UserProfile);
             } else {
               setUser({ uid: docSnap.id, ...data, role } as UserProfile);
             }
           } else {
+            // Document doesn't exist yet (might be registering)
             const isDefaultAdmin = firebaseUser.email?.toLowerCase() === 'axo.hossou@epitech.eu';
             setUser({
               uid: firebaseUser.uid,
@@ -91,20 +105,32 @@ export default function App() {
             } as UserProfile);
           }
           setLoading(false);
+          clearTimeout(loadingTimeout);
         }, (error) => {
+          console.error('Profile snapshot error:', error);
           if (auth.currentUser) {
-            handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+            const isDefaultAdmin = auth.currentUser.email?.toLowerCase() === 'axo.hossou@epitech.eu';
+            setUser({
+              uid: auth.currentUser.uid,
+              email: auth.currentUser.email || '',
+              role: isDefaultAdmin ? 'admin' : 'client',
+              status: 'active',
+            } as UserProfile);
           }
+          setLoading(false);
+          clearTimeout(loadingTimeout);
         });
       } else {
         setUser(null);
         setLoading(false);
+        clearTimeout(loadingTimeout);
       }
     });
 
     return () => {
       unsubscribeAuth();
       if (unsubscribeProfile) unsubscribeProfile();
+      clearTimeout(loadingTimeout);
     };
   }, []);
 

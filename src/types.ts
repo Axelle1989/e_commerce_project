@@ -28,19 +28,56 @@ export interface UserProfile {
   currentLocation?: GeoPoint;
   noteMoyenne?: number;
   totalDeliveries?: number;
+  solde?: number;
+  totalGains?: number;
   createdAt: any;
   validatedAt?: any;
   displayName?: string; // For compatibility with Firebase Auth
 }
 
-export type OrderStatus = 'awaiting_payment' | 'pending' | 'accepted' | 'at_market' | 'delivering' | 'delivered' | 'cancelled';
+export type OrderStatus = 'awaiting_payment' | 'pending' | 'accepted' | 'at_market' | 'shopping_completed' | 'delivering' | 'delivered' | 'cancelled' | 'disputed';
 
 export interface OrderItem {
   tempId?: string;
   name: string;
   quantity: number;
+  unit: string;
   proposedPricePerUnit: number;
   total: number;
+}
+
+export interface ItemValidation {
+  itemId: string;
+  clientApproved: boolean | null;
+  clientRemark?: string;
+  driverActualPrice: number;
+  driverActualQuantity: number;
+  proofPhotos: string[];
+  proofVideoUrl?: string;
+  proofLocation?: GeoPoint;
+  proofTimestamp?: any;
+}
+
+export interface ChatMessage {
+  senderId: string;
+  senderRole: UserRole;
+  text: string;
+  timestamp: any;
+  type: 'text' | 'image' | 'system';
+  imageUrl?: string;
+}
+
+export interface Dispute {
+  id: string;
+  orderId: string;
+  clientId: string;
+  driverId: string;
+  reason: string;
+  status: 'pending' | 'resolved_validated' | 'resolved_partial_cancel' | 'resolved_total_cancel';
+  adminDecision?: string;
+  adminId?: string;
+  createdAt: any;
+  resolvedAt?: any;
 }
 
 export interface GeoPoint {
@@ -58,6 +95,8 @@ export interface Order {
   driverName?: string;
   marketName?: string;
   items: OrderItem[];
+  itemsValidation?: { [key: string]: ItemValidation }; // Keyed by item index or tempId
+  chatMessages?: ChatMessage[];
   subTotal: number;
   totalAmount: number;
   deliveryFee: number;
@@ -70,7 +109,12 @@ export interface Order {
   departureAt?: any;
   deliveredLocation?: GeoPoint;
   deliveredAt?: any;
+  proofPhotos?: string[];
+  proofStatus?: 'pending' | 'submitted' | 'approved' | 'rejected';
   createdAt: any;
+  shoppingCompletedAt?: any;
+  disputedAt?: any;
+  disputeId?: string;
 }
 
 export interface Review {
@@ -79,7 +123,7 @@ export interface Review {
   driverId: string;
   userId: string;
   note: number;
-  comment?: string;
+  commentaire?: string;
   createdAt: any;
 }
 
@@ -90,6 +134,26 @@ export interface AdminNotification {
   driverName?: string;
   read: boolean;
   createdAt: any;
+}
+
+export interface AdminChatMessage {
+  senderId: string;
+  text: string;
+  timestamp: any;
+  read: boolean;
+}
+
+export interface AdminChat {
+  id: string;
+  participants: string[]; // [livreurId, adminId]
+  livreurId: string;
+  livreurName: string;
+  livreurPhoto?: string;
+  messages: AdminChatMessage[];
+  lastMessage?: string;
+  lastUpdated: any;
+  unreadCountAdmin: number;
+  unreadCountLivreur: number;
 }
 
 export interface Product {

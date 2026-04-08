@@ -5,6 +5,8 @@ import { db, auth } from '../firebase';
 import { UserProfile } from '../types';
 import { Truck, ShieldCheck, CreditCard, ArrowRight, Loader2, AlertCircle, CheckCircle, Smartphone, Clock, CalendarCheck, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { BENIN_IMAGES } from '../constants/images';
+import ImageWithFallback from '../components/ImageWithFallback';
 
 export default function DriverOnboarding() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -15,6 +17,12 @@ export default function DriverOnboarding() {
 
   useEffect(() => {
     if (!auth.currentUser) return;
+
+    const loadingTimeout = setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+      }
+    }, 5000);
 
     const unsubscribe = onSnapshot(doc(db, 'users', auth.currentUser.uid), (docSnap) => {
       if (docSnap.exists()) {
@@ -29,9 +37,17 @@ export default function DriverOnboarding() {
         navigate('/login');
       }
       setLoading(false);
+      clearTimeout(loadingTimeout);
+    }, (error) => {
+      console.error('Onboarding snapshot error:', error);
+      setLoading(false);
+      clearTimeout(loadingTimeout);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      clearTimeout(loadingTimeout);
+    };
   }, [navigate]);
 
   const handleAcceptInterview = async () => {
@@ -229,17 +245,21 @@ export default function DriverOnboarding() {
               {
                 title: "Flexibilité Totale",
                 desc: "Travaillez quand vous voulez, où vous voulez à Cotonou.",
-                img: "https://images.unsplash.com/photo-1585914924626-15adac1e6402?auto=format&fit=crop&q=80&w=800"
+                img: BENIN_IMAGES.delivery.zemidjan
               },
               {
                 title: "Gains Attractifs",
                 desc: "Gardez 100% de vos pourboires et gagnez des bonus sur chaque course.",
-                img: "https://images.unsplash.com/photo-1553729459-efe14ef6055d?auto=format&fit=crop&q=80&w=800"
+                img: BENIN_IMAGES.gains.cash
               }
             ].map((benefit, i) => (
               <div key={i} className="bg-slate-50 rounded-[32px] overflow-hidden border border-slate-100 group">
                 <div className="h-32 overflow-hidden">
-                  <img src={benefit.img} alt={benefit.title} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                  <ImageWithFallback 
+                    src={benefit.img} 
+                    alt={benefit.title} 
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" 
+                  />
                 </div>
                 <div className="p-6 space-y-1">
                   <h4 className="font-black text-slate-900 text-sm">{benefit.title}</h4>

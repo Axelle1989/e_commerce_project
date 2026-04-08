@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, onSnapshot, addDoc, collection, serverTimestamp, getDoc, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, onSnapshot, addDoc, updateDoc, collection, serverTimestamp, getDoc, query, where, getDocs, limit } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { Order, UserProfile } from '../types';
-import { MapPin, Truck, Store, CheckCircle2, Navigation, Bell, Phone, MessageSquare, Star, Send, Loader2, X, Info, Calendar, Clock, ArrowRight, ArrowLeft, Package } from 'lucide-react';
+import { MapPin, Truck, Store, CheckCircle2, Navigation, Bell, Phone, MessageSquare, Star, Send, Loader2, X, Info, Calendar, Clock, ArrowRight, ArrowLeft, Package, Camera, ShieldAlert, AlertCircle, Maximize2, Check, ThumbsUp, ThumbsDown, List, Video } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import Chat from '../components/Chat';
+import { BENIN_IMAGES } from '../constants/images';
+import ImageWithFallback from '../components/ImageWithFallback';
 
 // Fix Leaflet icon issue using CDN
 const DefaultIcon = L.icon({
@@ -73,10 +76,16 @@ export default function SuiviCommande() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [reviewSubmitted, setReviewSubmitted] = useState(false);
   const [showDriverDetails, setShowDriverDetails] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState('');
+  const [submittingReport, setSubmittingReport] = useState(false);
   const [driverReviews, setDriverReviews] = useState<any[]>([]);
   const [loadingReviews, setLoadingReviews] = useState(false);
   const [lastNotification, setLastNotification] = useState<any>(null);
   const [showNotification, setShowNotification] = useState(false);
+  const [activeTab, setActiveTab] = useState<'status' | 'chat'>('status');
+  const [validatingItems, setValidatingItems] = useState<{[key: string]: {approved: boolean, remark: string}}>({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -109,22 +118,33 @@ export default function SuiviCommande() {
         // "active" case: find the most recent non-delivered order for this user
         const q = query(
           collection(db, 'orders'),
-          where('userId', '==', auth.currentUser.uid),
-          where('status', '!=', 'delivered'),
-          limit(1)
+          where('userId', '==', auth.currentUser.uid)
         );
         
         const unsubscribe = onSnapshot(q, async (snap) => {
           if (!snap.empty) {
-            const docSnap = snap.docs[0];
-            const orderData = { id: docSnap.id, ...docSnap.data() } as Order;
-            setOrder(orderData);
+            // Filter in memory to find the most recent active order
+            const activeOrders = snap.docs
+              .map(d => ({ id: d.id, ...d.data() } as Order))
+              .filter(o => o.status !== 'delivered' && o.status !== 'cancelled')
+              .sort((a, b) => {
+                const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                return timeB - timeA;
+              });
 
-            if (orderData.driverId && (!driver || driver.uid !== orderData.driverId)) {
-              const driverSnap = await getDoc(doc(db, 'users', orderData.driverId));
-              if (driverSnap.exists()) {
-                setDriver({ uid: driverSnap.id, ...driverSnap.data() } as UserProfile);
+            if (activeOrders.length > 0) {
+              const orderData = activeOrders[0];
+              setOrder(orderData);
+
+              if (orderData.driverId && (!driver || driver.uid !== orderData.driverId)) {
+                const driverSnap = await getDoc(doc(db, 'users', orderData.driverId));
+                if (driverSnap.exists()) {
+                  setDriver({ uid: driverSnap.id, ...driverSnap.data() } as UserProfile);
+                }
               }
+            } else {
+              setOrder(null);
             }
           } else {
             setOrder(null);
@@ -212,6 +232,115 @@ export default function SuiviCommande() {
     }
   };
 
+  const handleReportIssue = async () => {
+    if (!order || !auth.currentUser || !reportReason) return;
+    setSubmittingReport(true);
+    try {
+      const disputeId = `dispute_${Date.now()}`;
+      
+      await addDoc(collection(db, 'disputes'), {
+        id: disputeId,
+        orderId: order.id,
+        clientId: auth.currentUser.uid,
+        driverId: order.driverId,
+        reason: reportReason,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+
+      await addDoc(collection(db, 'admin_notifications'), {
+        type: 'order_alert',
+        orderId: order.id,
+        userId: auth.currentUser.uid,
+        driverId: order.driverId,
+        message: `LITIGE OUVERT par le client: ${reportReason}`,
+        read: false,
+        createdAt: serverTimestamp()
+      });
+      
+      await updateDoc(doc(db, 'orders', order.id), {
+        status: 'disputed',
+        disputedAt: serverTimestamp(),
+        disputeId: disputeId
+      });
+
+      setShowReportModal(false);
+      setReportReason('');
+      alert("Un litige a été ouvert. Un administrateur va intervenir pour médiation.");
+    } catch (error) {
+      console.error('Error reporting issue:', error);
+    } finally {
+      setSubmittingReport(false);
+    }
+  };
+
+  const handleValidateItems = async (globalApproved: boolean) => {
+    if (!order || !auth.currentUser) return;
+    setLoading(true);
+    try {
+      const validations = { ...(order.itemsValidation || {}) };
+      let hasRefusal = false;
+
+      order.items.forEach((_, index) => {
+        const itemVal = validatingItems[index] || { approved: globalApproved, remark: '' };
+        if (!itemVal.approved) hasRefusal = true;
+        
+        if (validations[index]) {
+          validations[index].clientApproved = itemVal.approved;
+          validations[index].clientRemark = itemVal.remark;
+        }
+      });
+
+      const newStatus = hasRefusal ? 'disputed' : 'delivering';
+      const updateData: any = {
+        itemsValidation: validations,
+        status: newStatus,
+        proofStatus: hasRefusal ? 'rejected' : 'approved'
+      };
+
+      if (hasRefusal) {
+        updateData.disputedAt = serverTimestamp();
+        // Create dispute
+        const disputeId = `dispute_${Date.now()}`;
+        updateData.disputeId = disputeId;
+        await addDoc(collection(db, 'disputes'), {
+          id: disputeId,
+          orderId: order.id,
+          clientId: auth.currentUser.uid,
+          driverId: order.driverId,
+          reason: "Articles refusés par le client lors de la validation des achats.",
+          status: 'pending',
+          createdAt: serverTimestamp()
+        });
+      } else {
+        updateData.departureAt = serverTimestamp();
+      }
+
+      await updateDoc(doc(db, 'orders', order.id), updateData);
+
+      // Notification
+      await addDoc(collection(db, 'notifications'), {
+        orderId: order.id,
+        userId: order.driverId,
+        type: hasRefusal ? 'order_disputed' : 'order_validated',
+        message: hasRefusal 
+          ? "Le client a refusé certains articles. Un litige est ouvert." 
+          : "Le client a validé vos achats ! Vous pouvez maintenant livrer.",
+        timestamp: serverTimestamp(),
+        read: false
+      });
+
+      if (hasRefusal) {
+        alert("Certains articles ont été refusés. Un litige est ouvert et un administrateur va intervenir.");
+      }
+
+    } catch (error) {
+      console.error('Error validating items:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (loading) return <div className="flex justify-center py-20"><Loader2 className="animate-spin h-10 w-10 text-benin-green" /></div>;
   if (!order) return (
     <div className="max-w-md mx-auto text-center py-20 space-y-6">
@@ -247,10 +376,59 @@ export default function SuiviCommande() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-10 pb-20">
-      <AnimatePresence>
+      {/* Delivery Illustration Header */}
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="relative h-48 rounded-[40px] overflow-hidden shadow-2xl bg-slate-900"
+      >
+        <ImageWithFallback 
+          src={BENIN_IMAGES.delivery.tracking} 
+          alt="Livraison en cours" 
+          className="w-full h-full object-cover opacity-60"
+        />
+        <div className="absolute inset-0 flex flex-col justify-center items-center text-center px-6">
+          <div className="w-16 h-16 bg-benin-green rounded-2xl flex items-center justify-center shadow-2xl shadow-benin-green/20 mb-4">
+            <Truck className="w-8 h-8 text-white animate-pulse" />
+          </div>
+          <h1 className="text-3xl font-black text-white tracking-tighter">
+            {order.status === 'delivered' ? 'Commande Livrée !' : 'Suivi de votre livraison'}
+          </h1>
+          <p className="text-white/70 font-medium">#{order.id.slice(-6).toUpperCase()}</p>
+        </div>
+      </motion.div>
+
+      {/* Tabs */}
+      <div className="flex bg-white p-2 rounded-3xl border border-slate-100 shadow-sm">
+        <button 
+          onClick={() => setActiveTab('status')}
+          className={`flex-1 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-3 ${
+            activeTab === 'status' ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/20' : 'text-slate-400 hover:bg-slate-50'
+          }`}
+        >
+          <Package className="w-5 h-5" /> Suivi
+        </button>
+        <button 
+          onClick={() => setActiveTab('chat')}
+          className={`flex-1 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-3 relative ${
+            activeTab === 'chat' ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/20' : 'text-slate-400 hover:bg-slate-50'
+          }`}
+        >
+          <MessageSquare className="w-5 h-5" /> Chat
+          {order.chatMessages && order.chatMessages.length > 0 && (
+            <span className="absolute top-3 right-1/4 w-2 h-2 bg-benin-red rounded-full animate-pulse" />
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'chat' ? (
+        <Chat orderId={orderId!} userRole="client" messages={order.chatMessages || []} />
+      ) : (
+        <>
+          <AnimatePresence>
         {showNotification && lastNotification && (
           <motion.div 
-            key={lastNotification.id || lastNotification.timestamp}
+            key={lastNotification.id || (lastNotification.timestamp?.seconds ? `notif-${lastNotification.timestamp.seconds}` : `notif-${Date.now()}`)}
             initial={{ opacity: 0, y: 100 }}
             animate={{ opacity: 1, y: -40 }}
             exit={{ opacity: 0, y: 100 }}
@@ -302,6 +480,128 @@ export default function SuiviCommande() {
         {/* Left: Status & Map Visual */}
         <div className="flex-1 space-y-8">
           <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-2xl shadow-slate-200/50">
+            {/* Validation Section (When shopping_completed) */}
+            {order.status === 'shopping_completed' && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white p-10 rounded-[48px] border-4 border-benin-green shadow-2xl space-y-10 mb-8"
+              >
+                <div className="text-center space-y-4">
+                  <div className="w-20 h-20 bg-benin-green/10 rounded-3xl flex items-center justify-center mx-auto text-benin-green">
+                    <CheckCircle2 className="w-10 h-10" />
+                  </div>
+                  <h2 className="text-3xl font-black text-slate-900 tracking-tight">Vérifiez vos achats</h2>
+                  <p className="text-slate-500 font-medium max-w-lg mx-auto">
+                    Le livreur a terminé les achats. Veuillez vérifier chaque article et valider pour qu'il puisse prendre la route.
+                  </p>
+                </div>
+
+                <div className="space-y-6">
+                  {order.items.map((item, index) => {
+                    const validation = (order.itemsValidation || {})[index];
+                    const currentVal = validatingItems[index] || { approved: true, remark: '' };
+
+                    return (
+                      <div key={index} className={`p-8 rounded-[32px] border-2 transition-all space-y-6 ${
+                        currentVal.approved ? 'bg-slate-50 border-slate-100' : 'bg-benin-red/5 border-benin-red/20'
+                      }`}>
+                        <div className="flex flex-col md:flex-row justify-between gap-6">
+                          <div className="space-y-4 flex-1">
+                            <div>
+                              <h3 className="text-xl font-black text-slate-900">{item.name}</h3>
+                              <p className="text-xs text-slate-500 font-medium uppercase tracking-widest">Détails de l'achat</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-6">
+                              <div className="p-4 bg-white rounded-2xl border border-slate-100">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Quantité</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-black text-slate-900">{validation?.driverActualQuantity} {item.unit}</span>
+                                  {validation?.driverActualQuantity !== item.quantity && (
+                                    <span className="text-[10px] font-black text-benin-red">(Commandé: {item.quantity})</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="p-4 bg-white rounded-2xl border border-slate-100">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Prix Payé</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-black text-slate-900">{validation?.driverActualPrice} FCFA</span>
+                                  {validation?.driverActualPrice !== item.proposedPricePerUnit && (
+                                    <span className={`text-[10px] font-black ${validation?.driverActualPrice > item.proposedPricePerUnit ? 'text-benin-red' : 'text-benin-green'}`}>
+                                      (Prévu: {item.proposedPricePerUnit})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-3">
+                              {validation?.proofPhotos.map((url, i) => (
+                                <div key={i} className="w-24 h-24 rounded-2xl overflow-hidden border border-slate-200 cursor-pointer hover:scale-105 transition-all" onClick={() => setSelectedImage(url)}>
+                                  <img src={url} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                </div>
+                              ))}
+                              {validation?.proofVideoUrl && (
+                                <div className="w-24 h-24 rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 flex items-center justify-center cursor-pointer hover:scale-105 transition-all" onClick={() => window.open(validation.proofVideoUrl, '_blank')}>
+                                  <Video className="w-8 h-8 text-white" />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-3 md:w-48">
+                            <button 
+                              onClick={() => setValidatingItems(prev => ({ ...prev, [index]: { ...currentVal, approved: true } }))}
+                              className={`py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${
+                                currentVal.approved ? 'bg-benin-green text-white shadow-lg shadow-benin-green/20' : 'bg-slate-100 text-slate-400'
+                              }`}
+                            >
+                              <ThumbsUp className="w-4 h-4" /> Conforme
+                            </button>
+                            <button 
+                              onClick={() => setValidatingItems(prev => ({ ...prev, [index]: { ...currentVal, approved: false } }))}
+                              className={`py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${
+                                !currentVal.approved ? 'bg-benin-red text-white shadow-lg shadow-benin-red/20' : 'bg-slate-100 text-slate-400'
+                              }`}
+                            >
+                              <ThumbsDown className="w-4 h-4" /> Refuser
+                            </button>
+                          </div>
+                        </div>
+
+                        {!currentVal.approved && (
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-benin-red uppercase tracking-widest ml-2">Pourquoi refusez-vous cet article ?</label>
+                            <textarea 
+                              value={currentVal.remark}
+                              onChange={(e) => setValidatingItems(prev => ({ ...prev, [index]: { ...currentVal, remark: e.target.value } }))}
+                              placeholder="Ex: Qualité médiocre, prix trop élevé, erreur de produit..."
+                              className="w-full p-4 bg-white border border-benin-red/20 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-benin-red outline-none min-h-[80px]"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-col md:flex-row gap-4 pt-6 border-t border-slate-100">
+                  <button 
+                    onClick={() => handleValidateItems(true)}
+                    className="flex-1 py-6 bg-benin-green text-white rounded-[24px] font-black text-sm uppercase tracking-widest shadow-2xl shadow-benin-green/30 hover:bg-benin-green/90 transition-all active:scale-95 flex items-center justify-center gap-3"
+                  >
+                    <Check className="w-6 h-6" /> TOUT EST CONFORME
+                  </button>
+                  <button 
+                    onClick={() => handleValidateItems(false)}
+                    className="flex-1 py-6 bg-slate-900 text-white rounded-[24px] font-black text-sm uppercase tracking-widest shadow-2xl shadow-slate-900/30 hover:bg-black transition-all active:scale-95 flex items-center justify-center gap-3"
+                  >
+                    <ShieldAlert className="w-6 h-6 text-benin-yellow" /> VALIDER AVEC REFUS
+                  </button>
+                </div>
+              </motion.div>
+            )}
             <div className="flex items-center justify-between mb-10">
               <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Suivi de Livraison</h2>
               <div className="flex flex-col items-end gap-2">
@@ -394,6 +694,51 @@ export default function SuiviCommande() {
                 </p>
               </div>
             </div>
+
+            {/* Proof of Purchase Section */}
+            {order.proofPhotos && order.proofPhotos.length > 0 && (
+              <div className="mb-10 space-y-6 bg-slate-900 p-8 rounded-[32px] shadow-2xl shadow-slate-900/20">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-white font-black text-lg flex items-center gap-3">
+                    <Camera className="w-5 h-5 text-benin-yellow" /> Preuves d'Achat
+                  </h3>
+                  {order.status === 'at_market' && (
+                    <span className="px-3 py-1 bg-benin-yellow text-slate-900 rounded-full text-[8px] font-black uppercase tracking-widest">
+                      Vérification en cours
+                    </span>
+                  )}
+                </div>
+                
+                <p className="text-slate-400 text-xs font-medium">
+                  Le livreur a acheté vos produits. Voici les preuves (tas de produits, reçus, etc.).
+                </p>
+
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-4">
+                  {order.proofPhotos.map((url, i) => (
+                    <motion.div 
+                      key={i} 
+                      whileHover={{ scale: 1.05 }}
+                      onClick={() => setSelectedImage(url)}
+                      className="aspect-square rounded-2xl overflow-hidden border border-white/10 cursor-pointer relative group"
+                    >
+                      <img src={url} alt="Preuve" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <Maximize2 className="w-5 h-5 text-white" />
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    onClick={() => setShowReportModal(true)}
+                    className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-widest border border-white/10 flex items-center justify-center gap-2 transition-all"
+                  >
+                    <AlertCircle className="w-4 h-4 text-benin-red" /> Signaler un problème
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Horizontal Stepper */}
             <div className="flex justify-between relative px-4">
@@ -491,7 +836,7 @@ export default function SuiviCommande() {
             <div className="space-y-6">
               <AnimatePresence mode="popLayout">
                 {order.status === 'delivered' && (
-                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
+                  <motion.div key="log-delivered" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
                     <div className="w-2 h-2 rounded-full bg-emerald-500 mt-2"></div>
                     <p className="text-sm text-slate-600 font-medium">
                       <span className="font-black text-slate-900">
@@ -501,7 +846,7 @@ export default function SuiviCommande() {
                   </motion.div>
                 )}
                 {['delivering', 'delivered'].includes(order.status) && (
-                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
+                  <motion.div key="log-delivering" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
                     <div className="w-2 h-2 rounded-full bg-benin-green mt-2"></div>
                     <p className="text-sm text-slate-600 font-medium">
                       <span className="font-black text-slate-900">
@@ -511,7 +856,7 @@ export default function SuiviCommande() {
                   </motion.div>
                 )}
                 {['at_market', 'delivering', 'delivered'].includes(order.status) && (
-                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
+                  <motion.div key="log-at-market" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
                     <div className="w-2 h-2 rounded-full bg-benin-green mt-2"></div>
                     <p className="text-sm text-slate-600 font-medium">
                       <span className="font-black text-slate-900">
@@ -521,14 +866,14 @@ export default function SuiviCommande() {
                   </motion.div>
                 )}
                 {['accepted', 'at_market', 'delivering', 'delivered'].includes(order.status) && (
-                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
+                  <motion.div key="log-accepted" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="flex gap-4">
                     <div className="w-2 h-2 rounded-full bg-benin-green mt-2"></div>
                     <p className="text-sm text-slate-600 font-medium">
                       Commande acceptée par le livreur.
                     </p>
                   </motion.div>
                 )}
-                <div className="flex gap-4">
+                <div key="log-created" className="flex gap-4">
                   <div className="w-2 h-2 rounded-full bg-slate-200 mt-2"></div>
                   <p className="text-sm text-slate-600 font-medium">
                     <span className="font-black text-slate-900">
@@ -552,7 +897,11 @@ export default function SuiviCommande() {
               </div>
             </div>
             <div className="h-40 rounded-3xl overflow-hidden shadow-sm">
-              <img src="https://images.unsplash.com/photo-1586769852836-bc069f19e1b6?auto=format&fit=crop&q=80&w=800" alt="Sécurité" className="w-full h-full object-cover" />
+              <ImageWithFallback 
+                src={BENIN_IMAGES.delivery.package} 
+                alt="Sécurité" 
+                className="w-full h-full object-cover" 
+              />
             </div>
             <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
               Tous nos livreurs sont vérifiés et suivis en temps réel par GPS pour assurer une livraison sans encombre à Cotonou.
@@ -628,10 +977,10 @@ export default function SuiviCommande() {
             )}
             <div className="space-y-4 relative z-10">
               {order.items.map((item, i) => (
-                <div key={`${item.name}-${i}`} className="flex justify-between text-sm">
+                <div key={`summary-item-${item.tempId || i}`} className="flex justify-between text-sm">
                   <div className="flex flex-col">
-                    <span className="text-slate-400 font-medium">{item.quantity}x {item.name}</span>
-                    <span className="text-[10px] text-slate-500">{item.proposedPricePerUnit} FCFA</span>
+                    <span className="text-slate-400 font-medium">{item.quantity} {item.unit} x {item.name}</span>
+                    <span className="text-[10px] text-slate-500">{item.proposedPricePerUnit} FCFA/{item.unit}</span>
                   </div>
                   <span className="font-black">{item.total} FCFA</span>
                 </div>
@@ -644,6 +993,91 @@ export default function SuiviCommande() {
           </div>
         </div>
       </div>
+
+      {/* Image Viewer Modal */}
+      <AnimatePresence>
+        {selectedImage && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 md:p-10">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedImage(null)}
+              className="absolute inset-0 bg-slate-900/95 backdrop-blur-md"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="relative max-w-4xl w-full max-h-full aspect-auto rounded-[32px] overflow-hidden shadow-2xl"
+            >
+              <img src={selectedImage} alt="Preuve Agrandie" className="w-full h-full object-contain" />
+              <button 
+                onClick={() => setSelectedImage(null)}
+                className="absolute top-6 right-6 p-4 bg-white/10 hover:bg-white/20 rounded-full text-white backdrop-blur-md transition-all"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Report Issue Modal */}
+      <AnimatePresence>
+        {showReportModal && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowReportModal(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[40px] p-10 shadow-2xl space-y-8"
+            >
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 bg-benin-red/10 rounded-2xl flex items-center justify-center mx-auto text-benin-red">
+                  <ShieldAlert className="w-8 h-8" />
+                </div>
+                <h3 className="text-2xl font-black text-slate-900 tracking-tight">Signaler un problème</h3>
+                <p className="text-slate-500 font-medium">Dites-nous ce qui ne va pas avec les preuves d'achat fournies.</p>
+              </div>
+
+              <div className="space-y-4">
+                <textarea
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value)}
+                  placeholder="Ex: Les produits ne correspondent pas, le prix est trop élevé, mauvaise qualité..."
+                  className="w-full p-6 bg-slate-50 border border-slate-100 rounded-3xl text-sm focus:ring-4 focus:ring-benin-red/10 outline-none min-h-[120px] resize-none font-medium"
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowReportModal(false)}
+                  className="flex-1 py-4 bg-slate-100 text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest"
+                >
+                  Annuler
+                </button>
+                <button 
+                  onClick={handleReportIssue}
+                  disabled={!reportReason || submittingReport}
+                  className="flex-[2] py-4 bg-benin-red text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-benin-red/20 disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {submittingReport ? <Loader2 className="animate-spin w-4 h-4" /> : "Envoyer"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+        </>
+      )}
 
       {/* Driver Details Modal */}
       <AnimatePresence>

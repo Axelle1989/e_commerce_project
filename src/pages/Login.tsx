@@ -4,6 +4,8 @@ import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { Truck, LogIn, Phone, Mail, Lock, User, Camera, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { BENIN_IMAGES } from '../constants/images';
+import ImageWithFallback from '../components/ImageWithFallback';
 
 export default function Login() {
   const [role, setRole] = useState<'client' | 'driver'>('client');
@@ -27,6 +29,7 @@ export default function Login() {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
+      // Check if user document exists, if not create it
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (!userDoc.exists()) {
         const finalRole = user.email?.toLowerCase() === 'axo.hossou@epitech.eu' ? 'admin' : role;
@@ -49,11 +52,17 @@ export default function Login() {
       console.error('Google Login Error:', error);
       let message = "Une erreur est survenue lors de la connexion avec Google.";
       if (error.code === 'auth/popup-closed-by-user') {
-        message = "La fenêtre de connexion a été fermée.";
+        message = "La fenêtre de connexion a été fermée avant la fin de l'opération.";
+      } else if (error.code === 'auth/popup-blocked') {
+        message = "La fenêtre de connexion a été bloquée par votre navigateur. Veuillez autoriser les popups pour ce site.";
       } else if (error.code === 'auth/network-request-failed') {
         message = "Problème de connexion internet.";
+      } else if (error.code === 'auth/unauthorized-domain') {
+        message = "Ce domaine n'est pas autorisé pour l'authentification Google. Veuillez contacter l'administrateur.";
       }
       setError(message);
+      // If we failed after sign-in but before profile creation, we might want to sign out
+      // but App.tsx handles missing profiles, so it's safer to let it be.
     } finally {
       setLoading(false);
     }
@@ -61,6 +70,8 @@ export default function Login() {
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
+    
     setLoading(true);
     setError('');
     try {
@@ -89,11 +100,12 @@ export default function Login() {
         const result = await signInWithEmailAndPassword(auth, email, password);
         const user = result.user;
         
-        // Step 4: Check if user document exists, if not create it
+        // Ensure user document exists (in case it was deleted or never created)
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (!userDoc.exists()) {
-          const finalRole = user.email?.toLowerCase() === 'axo.hossou@epitech.eu' ? 'admin' : 'client';
-          const finalStatus = finalRole === 'admin' ? 'active' : 'active';
+          const isDefaultAdmin = user.email?.toLowerCase() === 'axo.hossou@epitech.eu';
+          const finalRole = isDefaultAdmin ? 'admin' : 'client';
+          const finalStatus = 'active';
           
           await setDoc(doc(db, 'users', user.uid), {
             uid: user.uid,
@@ -121,13 +133,13 @@ export default function Login() {
           message = "Mot de passe incorrect";
           break;
         case 'auth/invalid-credential':
-          message = "Identifiants incorrects (email ou mot de passe)";
+          message = "Identifiants incorrects (email ou mot de passe).";
           break;
         case 'auth/too-many-requests':
-          message = "Trop de tentatives, réessayez plus tard";
+          message = "Trop de tentatives, réessayez plus tard ou réinitialisez votre mot de passe.";
           break;
         case 'auth/network-request-failed':
-          message = "Vérifiez votre connexion internet";
+          message = "Vérifiez votre connexion internet.";
           break;
         case 'auth/email-already-in-use':
           message = "Cet email est déjà utilisé par un autre compte.";
@@ -136,37 +148,54 @@ export default function Login() {
           message = "Le mot de passe est trop court (min 6 caractères).";
           break;
         default:
-          message = error.message;
+          message = error.message || "Une erreur inconnue est survenue.";
       }
       setError(message);
-    } finally {
-      setLoading(false);
+      setLoading(false); // Ensure loading is false on error
     }
+    // Note: We don't set loading to false here on success because 
+    // App.tsx will handle the redirection and loading state.
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans">
-      {/* Left Side: Image */}
-      <div className="hidden lg:block w-1/2 relative overflow-hidden">
-        <img 
-          src="https://images.unsplash.com/photo-1531482615713-2afd69097998?auto=format&fit=crop&q=80&w=1200" 
-          alt="Marché Bénin" 
-          className="absolute inset-0 w-full h-full object-cover"
-        />
-        <div className="absolute inset-0 bg-gradient-to-br from-benin-green/40 to-slate-900/60 flex flex-col justify-end p-20 text-white">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-4"
-          >
-            <h2 className="text-6xl font-black tracking-tighter leading-none">
-              Livrez plus, <br/> gagnez plus.
+      {/* Left Side: Clean Background with Text */}
+      <div className="hidden lg:flex w-1/2 bg-benin-green/5 flex-col justify-center p-20 border-r border-slate-100 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10">
+          <ImageWithFallback 
+            src={BENIN_IMAGES.market.dantokpa} 
+            alt="Background" 
+            className="w-full h-full object-cover"
+          />
+        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-8"
+        >
+          <div className="w-20 h-20 bg-benin-green rounded-3xl flex items-center justify-center shadow-2xl shadow-benin-green/20">
+            <Truck className="text-white w-10 h-10" />
+          </div>
+          <div className="space-y-4">
+            <h2 className="text-6xl font-black tracking-tighter leading-none text-slate-900">
+              Livrez plus, <br/> <span className="text-benin-green">gagnez plus.</span>
             </h2>
-            <p className="text-xl font-medium text-white/80 max-w-md">
+            <p className="text-xl font-medium text-slate-500 max-w-md">
               Rejoignez la plus grande flotte de livraison à Cotonou et profitez d'une flexibilité totale.
             </p>
-          </motion.div>
-        </div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-6 pt-10">
+            <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl font-black text-slate-900">100%</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Flexible</p>
+            </div>
+            <div className="p-6 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <p className="text-3xl font-black text-slate-900">24/7</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Disponible</p>
+            </div>
+          </div>
+        </motion.div>
       </div>
 
       {/* Right Side: Form */}

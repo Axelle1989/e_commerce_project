@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs, doc, updateDoc, query, orderBy, limit, serverTimestamp, deleteDoc, getDoc, addDoc, onSnapshot } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { Order, UserProfile, Review, UserStatus } from '../types';
+import { Order, UserProfile, Review, UserStatus, Dispute, AdminChat, AdminChatMessage } from '../types';
 import { 
   LayoutDashboard, 
   ShoppingBag, 
@@ -26,21 +26,33 @@ import {
   MapPin,
   Tag,
   Info,
-  Loader2
+  Loader2,
+  Plus,
+  MessageSquare,
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import ImageWithFallback from '../components/ImageWithFallback';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 
 export default function BackOffice() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'orders' | 'users' | 'drivers' | 'reviews' | 'candidatures' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'orders' | 'users' | 'drivers' | 'reviews' | 'candidatures' | 'settings' | 'disputes' | 'chats'>('dashboard');
   const [userFilter, setUserFilter] = useState<'all' | 'client' | 'driver' | 'admin'>('all');
   const [orders, setOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [disputes, setDisputes] = useState<Dispute[]>([]);
+  const [chats, setChats] = useState<AdminChat[]>([]);
+  const [selectedChat, setSelectedChat] = useState<AdminChat | null>(null);
+  const [newMessage, setNewMessage] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deliverySettings, setDeliverySettings] = useState({ fixedFee: 500 });
+  const [units, setUnits] = useState<{ id: string, label: string }[]>([]);
+  const [newUnit, setNewUnit] = useState({ id: '', label: '' });
   const [savingSettings, setSavingSettings] = useState(false);
+  const [savingUnit, setSavingUnit] = useState(false);
   
   // Modals state
   const [showRejectionModal, setShowRejectionModal] = useState(false);
@@ -64,6 +76,7 @@ export default function BackOffice() {
   const [showNotifications, setShowNotifications] = useState(false);
 
   const pendingApplicationsCount = users.filter(u => u.role === 'driver' && u.status === 'pending_validation').length;
+  const pendingDisputesCount = disputes.filter(d => d.status === 'pending').length;
   const unreadCount = notifications.filter(n => !n.read).length;
 
   const markNotificationAsRead = async (id: string) => {
@@ -89,6 +102,9 @@ export default function BackOffice() {
         const reviewSnap = await getDocs(query(collection(db, 'reviews'), orderBy('createdAt', 'desc'))).catch(e => handleFirestoreError(e, OperationType.LIST, 'reviews'));
         setReviews(reviewSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Review)));
 
+        const disputeSnap = await getDocs(query(collection(db, 'disputes'), orderBy('createdAt', 'desc'))).catch(e => handleFirestoreError(e, OperationType.LIST, 'disputes'));
+        setDisputes(disputeSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Dispute)));
+
         const notifSnap = await getDocs(query(collection(db, 'admin_notifications'), orderBy('createdAt', 'desc'), limit(10))).catch(e => handleFirestoreError(e, OperationType.LIST, 'admin_notifications'));
         setNotifications(notifSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
 
@@ -96,6 +112,9 @@ export default function BackOffice() {
         if (settingsSnap.exists()) {
           setDeliverySettings(settingsSnap.data() as any);
         }
+
+        const unitSnap = await getDocs(collection(db, 'units')).catch(e => handleFirestoreError(e, OperationType.LIST, 'units'));
+        setUnits(unitSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
       } catch (error) {
         console.error('Error fetching backoffice data:', error);
       } finally {
@@ -103,7 +122,55 @@ export default function BackOffice() {
       }
     };
     fetchData();
+
+    // Listen to chats
+    const unsubscribeChats = onSnapshot(collection(db, 'chats'), (snapshot) => {
+      const chatsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AdminChat));
+      setChats(chatsData.sort((a, b) => {
+        const timeA = a.lastUpdated?.seconds || 0;
+        const timeB = b.lastUpdated?.seconds || 0;
+        return timeB - timeA;
+      }));
+    });
+
+    return () => unsubscribeChats();
   }, []);
+
+  useEffect(() => {
+    if (selectedChat && activeTab === 'chats') {
+      const chat = chats.find(c => c.id === selectedChat.id);
+      if (chat && chat.unreadCountAdmin > 0) {
+        updateDoc(doc(db, 'chats', chat.id), {
+          unreadCountAdmin: 0
+        });
+      }
+    }
+  }, [selectedChat, chats, activeTab]);
+
+  const sendAdminMessage = async () => {
+    if (!newMessage.trim() || !selectedChat || !auth.currentUser) return;
+    setSendingMessage(true);
+    try {
+      const message: AdminChatMessage = {
+        senderId: 'admin',
+        text: newMessage.trim(),
+        timestamp: serverTimestamp(),
+        read: false
+      };
+
+      await updateDoc(doc(db, 'chats', selectedChat.id), {
+        messages: [...selectedChat.messages, message],
+        lastMessage: newMessage.trim(),
+        lastUpdated: serverTimestamp(),
+        unreadCountLivreur: (selectedChat.unreadCountLivreur || 0) + 1
+      });
+      setNewMessage('');
+    } catch (error) {
+      console.error('Error sending admin message:', error);
+    } finally {
+      setSendingMessage(false);
+    }
+  };
 
   const chartData = useMemo(() => {
     const last7Days = Array.from({ length: 7 }).map((_, i) => {
@@ -303,6 +370,58 @@ export default function BackOffice() {
     }
   };
 
+  const addUnit = async () => {
+    if (!newUnit.id || !newUnit.label) return;
+    setSavingUnit(true);
+    try {
+      const { setDoc } = await import('firebase/firestore');
+      await setDoc(doc(db, 'units', newUnit.id), { label: newUnit.label });
+      setUnits([...units, { id: newUnit.id, label: newUnit.label }]);
+      setNewUnit({ id: '', label: '' });
+    } catch (error) {
+      console.error('Error adding unit:', error);
+    } finally {
+      setSavingUnit(false);
+    }
+  };
+
+  const deleteUnit = async (id: string) => {
+    if (!window.confirm('Supprimer cette unité ?')) return;
+    try {
+      await deleteDoc(doc(db, 'units', id));
+      setUnits(units.filter(u => u.id !== id));
+    } catch (error) {
+      console.error('Error deleting unit:', error);
+    }
+  };
+
+  const handleResolveDispute = async (disputeId: string, orderId: string, decision: Dispute['status'], adminDecision: string) => {
+    if (!auth.currentUser) return;
+    try {
+      await updateDoc(doc(db, 'disputes', disputeId), {
+        status: decision,
+        adminDecision,
+        adminId: auth.currentUser.uid,
+        resolvedAt: serverTimestamp()
+      });
+
+      let orderStatus: Order['status'] = 'delivering';
+      if (decision === 'resolved_total_cancel') orderStatus = 'cancelled';
+      
+      await updateDoc(doc(db, 'orders', orderId), {
+        status: orderStatus,
+        proofStatus: decision === 'resolved_total_cancel' ? 'rejected' : 'approved'
+      });
+
+      setDisputes(disputes.map(d => d.id === disputeId ? { ...d, status: decision, adminDecision } : d));
+      setOrders(orders.map(o => o.id === orderId ? { ...o, status: orderStatus } : o));
+
+      alert("Litige résolu avec succès.");
+    } catch (error) {
+      console.error('Error resolving dispute:', error);
+    }
+  };
+
   if (loading) return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-benin-green"></div>
@@ -342,6 +461,8 @@ export default function BackOffice() {
               { id: 'candidatures', label: 'Candidatures', icon: ShieldCheck, badge: pendingApplicationsCount },
               { id: 'drivers', label: 'Livreurs Actifs', icon: Truck },
               { id: 'orders', label: 'Commandes Clients', icon: ShoppingBag },
+              { id: 'chats', label: 'Chats Livreurs', icon: MessageSquare, badge: chats.reduce((sum, c) => sum + (c.unreadCountAdmin || 0), 0) },
+              { id: 'disputes', label: 'Litiges', icon: ShieldAlert, badge: pendingDisputesCount },
               { id: 'users', label: 'Utilisateurs', icon: Users },
               { id: 'reviews', label: 'Avis & Modération', icon: CheckCircle },
               { id: 'settings', label: 'Paramètres', icon: Settings },
@@ -374,7 +495,11 @@ export default function BackOffice() {
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-benin-yellow rounded-xl flex items-center justify-center font-black text-slate-900 overflow-hidden">
                 {auth.currentUser?.photoURL ? (
-                  <img src={auth.currentUser.photoURL} alt="" className="w-full h-full object-cover" />
+                  <ImageWithFallback 
+                    src={auth.currentUser.photoURL} 
+                    alt="" 
+                    className="w-full h-full object-cover" 
+                  />
                 ) : (
                   auth.currentUser?.displayName?.split(' ').map(n => n[0]).join('') || 'AD'
                 )}
@@ -588,7 +713,7 @@ export default function BackOffice() {
                           <div key={user.uid} className="flex items-center justify-between p-5 bg-slate-50 rounded-[24px] border border-slate-100">
                             <div className="flex items-center gap-5">
                               <div className="w-14 h-14 bg-white rounded-2xl overflow-hidden shadow-sm border border-slate-100">
-                                <img src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} alt="" className="w-full h-full object-cover" />
+                                <ImageWithFallback src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} alt="" className="w-full h-full object-cover" />
                               </div>
                               <div>
                                 <p className="font-black text-slate-900 text-sm">{user.displayName}</p>
@@ -638,7 +763,11 @@ export default function BackOffice() {
                           <div className="flex flex-col md:flex-row gap-8">
                             <div className="w-full md:w-48 space-y-4">
                               <div className="aspect-square bg-slate-50 rounded-2xl overflow-hidden border border-slate-100">
-                                <img src={user.photoURL || `https://picsum.photos/seed/${user.uid}/200`} alt="" className="w-full h-full object-cover" />
+                                <ImageWithFallback 
+                                  src={user.photoURL || `https://picsum.photos/seed/${user.uid}/200`} 
+                                  alt="" 
+                                  className="w-full h-full object-cover" 
+                                />
                               </div>
                               <button 
                                 onClick={() => window.open(user.idCardPhotoUrl, '_blank')}
@@ -711,7 +840,7 @@ export default function BackOffice() {
                         <div key={user.uid} className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-center gap-6">
                           <div className="flex items-center gap-6">
                             <div className="w-16 h-16 rounded-2xl overflow-hidden border border-slate-100">
-                              <img src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} alt="" className="w-full h-full object-cover" />
+                              <ImageWithFallback src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} alt="" className="w-full h-full object-cover" />
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
@@ -760,7 +889,7 @@ export default function BackOffice() {
                       <div key={user.uid} className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
                         <div className="flex items-center gap-4">
                           <div className="w-14 h-14 rounded-2xl overflow-hidden border border-slate-100">
-                            <img src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} alt="" className="w-full h-full object-cover" />
+                            <ImageWithFallback src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} alt="" className="w-full h-full object-cover" />
                           </div>
                           <div>
                             <p className="font-black text-slate-900">{user.displayName || `${user.prenom} ${user.nom}`}</p>
@@ -848,6 +977,133 @@ export default function BackOffice() {
                 </div>
               )}
 
+              {activeTab === 'disputes' && (
+                <div className="space-y-8">
+                  <h2 className="text-3xl font-black text-slate-900 tracking-tight">Gestion des Litiges</h2>
+                  <div className="grid grid-cols-1 gap-8">
+                    {disputes.map(dispute => {
+                      const order = orders.find(o => o.id === dispute.orderId);
+                      const client = users.find(u => u.uid === dispute.clientId);
+                      const driver = users.find(u => u.uid === dispute.driverId);
+
+                      return (
+                        <div key={dispute.id} className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm space-y-8">
+                          <div className="flex flex-col md:flex-row justify-between gap-6">
+                            <div className="space-y-4">
+                              <div className="flex items-center gap-3">
+                                <span className={`px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest ${
+                                  dispute.status === 'pending' ? 'bg-benin-red text-white' : 'bg-slate-100 text-slate-400'
+                                }`}>
+                                  {dispute.status === 'pending' ? 'En attente' : 'Résolu'}
+                                </span>
+                                <h3 className="text-xl font-black text-slate-900">Litige #{dispute.id.slice(-6)}</h3>
+                              </div>
+                              <p className="text-sm text-slate-600 font-medium bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                                <span className="font-black text-slate-900">Raison:</span> {dispute.reason}
+                              </p>
+                            </div>
+                            <div className="flex gap-4">
+                              <div className="text-right">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Client</p>
+                                <p className="text-sm font-black text-slate-900">{client?.displayName || 'Inconnu'}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Livreur</p>
+                                <p className="text-sm font-black text-slate-900">{driver?.displayName || 'Inconnu'}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {order && (
+                            <div className="space-y-6">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                <div className="space-y-4">
+                                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">Preuves d'achat</h4>
+                                  <div className="grid grid-cols-3 gap-3">
+                                    {Object.values(order.itemsValidation || {}).map((val, i) => (
+                                      val.proofPhotos.map((url, j) => (
+                                        <div key={`${i}-${j}`} className="aspect-square rounded-xl overflow-hidden border border-slate-100 cursor-pointer" onClick={() => window.open(url, '_blank')}>
+                                          <ImageWithFallback 
+                                            src={url} 
+                                            alt="" 
+                                            className="w-full h-full object-cover" 
+                                          />
+                                        </div>
+                                      ))
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="space-y-4">
+                                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">Détails Validation</h4>
+                                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
+                                    {order.items.map((item, i) => {
+                                      const val = (order.itemsValidation || {})[i];
+                                      return (
+                                        <div key={`item-val-${i}`} className={`p-3 rounded-xl border text-xs ${val?.clientApproved === false ? 'bg-benin-red/5 border-benin-red/10' : 'bg-slate-50 border-slate-100'}`}>
+                                          <div className="flex justify-between font-black">
+                                            <span>{item.name}</span>
+                                            <span className={val?.clientApproved === false ? 'text-benin-red' : 'text-benin-green'}>
+                                              {val?.clientApproved === false ? 'REFUSÉ' : 'ACCEPTÉ'}
+                                            </span>
+                                          </div>
+                                          {val?.clientRemark && <p className="mt-1 italic text-slate-500">"{val.clientRemark}"</p>}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {dispute.status === 'pending' && (
+                                <div className="pt-8 border-t border-slate-100 space-y-6">
+                                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest">Décision de l'Administrateur</h4>
+                                  <div className="flex flex-wrap gap-4">
+                                    <button 
+                                      onClick={() => handleResolveDispute(dispute.id, order.id, 'resolved_validated', 'Validation forcée par admin')}
+                                      className="flex-1 py-4 bg-benin-green text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-benin-green/20"
+                                    >
+                                      Valider les achats
+                                    </button>
+                                    <button 
+                                      onClick={() => handleResolveDispute(dispute.id, order.id, 'resolved_partial_cancel', 'Annulation partielle par admin')}
+                                      className="flex-1 py-4 bg-benin-yellow text-slate-900 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-benin-yellow/20"
+                                    >
+                                      Annulation Partielle
+                                    </button>
+                                    <button 
+                                      onClick={() => handleResolveDispute(dispute.id, order.id, 'resolved_total_cancel', 'Annulation totale par admin')}
+                                      className="flex-1 py-4 bg-benin-red text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-benin-red/20"
+                                    >
+                                      Annulation Totale
+                                    </button>
+                                    {driver && (
+                                      <button 
+                                        onClick={() => toggleUserSuspension(driver)}
+                                        className="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest"
+                                      >
+                                        Suspendre Livreur
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {disputes.length === 0 && (
+                      <div className="py-20 text-center space-y-4">
+                        <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
+                          <ShieldAlert className="w-10 h-10 text-slate-200" />
+                        </div>
+                        <p className="text-slate-400 font-medium italic">Aucun litige en cours</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'users' && (
                 <div className="space-y-8">
                   <div className="flex items-center justify-between">
@@ -880,7 +1136,11 @@ export default function BackOffice() {
                             <td className="px-8 py-6">
                               <div className="flex items-center gap-4">
                                 <div className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-100 shadow-sm">
-                                  <img src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} alt="" className="w-full h-full object-cover" />
+                                  <ImageWithFallback 
+                                    src={user.photoURL || `https://picsum.photos/seed/${user.uid}/100`} 
+                                    alt="" 
+                                    className="w-full h-full object-cover" 
+                                  />
                                 </div>
                                 <div>
                                   <p className="font-black text-slate-900 text-sm">{user.displayName}</p>
@@ -948,7 +1208,7 @@ export default function BackOffice() {
                         <div className="flex justify-between items-start">
                           <div className="flex items-center gap-4">
                             <div className="w-12 h-12 bg-slate-50 rounded-2xl overflow-hidden border border-slate-100">
-                              <img src={`https://picsum.photos/seed/${review.userId}/100`} alt="" className="w-full h-full object-cover" />
+                              <ImageWithFallback src={`https://picsum.photos/seed/${review.userId}/100`} alt="" className="w-full h-full object-cover" />
                             </div>
                             <div>
                               <p className="font-black text-slate-900 text-sm">Client #{review.userId.slice(-4)}</p>
@@ -966,7 +1226,7 @@ export default function BackOffice() {
                             <Trash2 className="w-5 h-5" />
                           </button>
                         </div>
-                        <p className="text-sm text-slate-600 font-medium italic leading-relaxed">"{review.comment || 'Aucun commentaire'}"</p>
+                        <p className="text-sm text-slate-600 font-medium italic leading-relaxed">"{review.commentaire || 'Aucun commentaire'}"</p>
                         <div className="pt-6 border-t border-slate-50 flex justify-between items-center">
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Livreur: {review.driverId.slice(-4)}</span>
                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{new Date(review.createdAt?.seconds * 1000).toLocaleDateString()}</span>
@@ -984,7 +1244,124 @@ export default function BackOffice() {
                   </div>
                 </div>
               )}
-               {activeTab === 'settings' && (
+              {activeTab === 'chats' && (
+                <div className="h-[calc(100vh-200px)] flex gap-8">
+                  {/* Chat List */}
+                  <div className="w-80 bg-white rounded-[40px] border border-slate-100 shadow-sm flex flex-col overflow-hidden">
+                    <div className="p-6 border-b border-slate-50">
+                      <h3 className="text-xl font-black text-slate-900">Conversations</h3>
+                    </div>
+                          <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                            {chats.map(chat => (
+                              <button
+                                key={chat.id}
+                                onClick={() => setSelectedChat(chat)}
+                                className={`w-full p-4 rounded-2xl flex items-center gap-4 transition-all ${
+                                  selectedChat?.id === chat.id 
+                                    ? 'bg-benin-green text-white shadow-lg shadow-benin-green/20' 
+                                    : 'hover:bg-slate-50 text-slate-600'
+                                }`}
+                              >
+                                <div className="w-10 h-10 rounded-xl overflow-hidden border border-white/20 shrink-0">
+                                  <ImageWithFallback src={chat.livreurPhoto || `https://picsum.photos/seed/${chat.livreurId}/100`} alt="" className="w-full h-full object-cover" />
+                                </div>
+                          <div className="flex-1 text-left min-w-0">
+                            <p className="font-black text-sm truncate">{chat.livreurName}</p>
+                            <p className={`text-[10px] truncate ${selectedChat?.id === chat.id ? 'text-white/70' : 'text-slate-400'}`}>
+                              {chat.lastMessage}
+                            </p>
+                          </div>
+                          {chat.unreadCountAdmin > 0 && (
+                            <span className="w-5 h-5 bg-benin-red text-white text-[10px] font-black flex items-center justify-center rounded-full border-2 border-white shrink-0">
+                              {chat.unreadCountAdmin}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                      {chats.length === 0 && (
+                        <div className="text-center py-10">
+                          <p className="text-xs text-slate-400 italic">Aucune conversation</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Chat Window */}
+                  <div className="flex-1 bg-white rounded-[40px] border border-slate-100 shadow-sm flex flex-col overflow-hidden">
+                    {selectedChat ? (
+                      <>
+                        <div className="p-6 border-b border-slate-50 flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl overflow-hidden border border-slate-100">
+                              <ImageWithFallback src={selectedChat.livreurPhoto || `https://picsum.photos/seed/${selectedChat.livreurId}/100`} alt="" className="w-full h-full object-cover" />
+                            </div>
+                            <div>
+                              <h3 className="font-black text-slate-900">{selectedChat.livreurName}</h3>
+                              <p className="text-[10px] font-black text-benin-green uppercase tracking-widest">Livreur en ligne</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-8 space-y-6 bg-slate-50/50">
+                          {selectedChat.messages.map((msg, i) => {
+                            const isMe = msg.senderId === 'admin';
+                            return (
+                              <div key={`msg-${i}`} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-[70%] space-y-1 ${isMe ? 'items-end' : 'items-start'}`}>
+                                  <div className={`p-4 rounded-[24px] text-sm font-medium shadow-sm ${
+                                    isMe 
+                                      ? 'bg-slate-900 text-white rounded-tr-none' 
+                                      : 'bg-white text-slate-900 rounded-tl-none border border-slate-100'
+                                  }`}>
+                                    {msg.text}
+                                  </div>
+                                  <div className={`flex items-center gap-2 px-2 ${isMe ? 'flex-row-reverse' : ''}`}>
+                                    <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
+                                      {msg.timestamp?.seconds ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '...'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="p-6 border-t border-slate-50">
+                          <div className="flex gap-4">
+                            <input 
+                              type="text"
+                              value={newMessage}
+                              onChange={(e) => setNewMessage(e.target.value)}
+                              onKeyDown={(e) => e.key === 'Enter' && sendAdminMessage()}
+                              placeholder="Écrivez votre réponse..."
+                              className="flex-1 bg-slate-50 border border-slate-100 rounded-2xl px-6 py-4 text-sm font-medium focus:ring-2 focus:ring-benin-green outline-none transition-all"
+                            />
+                            <button 
+                              onClick={sendAdminMessage}
+                              disabled={!newMessage.trim() || sendingMessage}
+                              className="bg-benin-green text-white p-4 rounded-2xl shadow-xl shadow-benin-green/20 hover:bg-benin-green/90 transition-all active:scale-95 disabled:opacity-50"
+                            >
+                              {sendingMessage ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center text-center space-y-6">
+                        <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center">
+                          <MessageSquare className="w-12 h-12 text-slate-200" />
+                        </div>
+                        <div className="max-w-xs">
+                          <h3 className="text-xl font-black text-slate-900">Support Livreurs</h3>
+                          <p className="text-sm text-slate-500 font-medium">Sélectionnez une conversation pour commencer à discuter avec un livreur.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'settings' && (
                 <div className="space-y-8 max-w-2xl">
                   <h2 className="text-3xl font-black text-slate-900 tracking-tight">Paramètres Généraux</h2>
                   
@@ -1034,6 +1411,74 @@ export default function BackOffice() {
                       )}
                       ENREGISTRER LES PARAMÈTRES
                     </button>
+                  </div>
+
+                  <div className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm space-y-8">
+                    <div className="flex items-center gap-4">
+                      <div className="p-4 bg-benin-yellow/10 rounded-2xl">
+                        <Tag className="w-8 h-8 text-benin-yellow" />
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-black text-slate-900 tracking-tight">Gestion des Unités</h3>
+                        <p className="text-xs text-slate-500 font-medium">Ajoutez ou supprimez les unités de mesure disponibles.</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">ID de l'unité (ex: kg, litre)</label>
+                          <input 
+                            type="text" 
+                            value={newUnit.id}
+                            onChange={(e) => setNewUnit({ ...newUnit, id: e.target.value })}
+                            className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-6 py-4 text-sm font-black outline-none focus:ring-2 focus:ring-benin-yellow"
+                            placeholder="kg"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Libellé (ex: kilo (kg))</label>
+                          <input 
+                            type="text" 
+                            value={newUnit.label}
+                            onChange={(e) => setNewUnit({ ...newUnit, label: e.target.value })}
+                            className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-6 py-4 text-sm font-black outline-none focus:ring-2 focus:ring-benin-yellow"
+                            placeholder="kilo (kg)"
+                          />
+                        </div>
+                        <button 
+                          onClick={addUnit}
+                          disabled={savingUnit || !newUnit.id || !newUnit.label}
+                          className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs hover:bg-black transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                        >
+                          {savingUnit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                          AJOUTER L'UNITÉ
+                        </button>
+                      </div>
+
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Unités Actuelles</label>
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                          {units.map(u => (
+                            <div key={u.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100">
+                              <div>
+                                <p className="text-sm font-black text-slate-900">{u.label}</p>
+                                <p className="text-[10px] text-slate-400 font-medium">ID: {u.id}</p>
+                              </div>
+                              <button 
+                                onClick={() => deleteUnit(u.id)}
+                                className="p-2 text-slate-300 hover:text-benin-red transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                          {units.length === 0 && (
+                            <p className="text-center py-8 text-xs text-slate-400 italic">Aucune unité configurée</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}

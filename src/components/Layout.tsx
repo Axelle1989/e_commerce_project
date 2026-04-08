@@ -2,6 +2,7 @@ import { Outlet, Link, useNavigate } from 'react-router-dom';
 import { ShoppingCart, MapPin, User, LogOut, Package, LayoutDashboard, Truck, Store } from 'lucide-react';
 import { auth } from '../firebase';
 import { UserProfile } from '../types';
+import ImageWithFallback from './ImageWithFallback';
 
 interface LayoutProps {
   user: UserProfile | null;
@@ -54,7 +55,7 @@ export default function Layout({ user }: LayoutProps) {
             <Link to="/profile" className="hidden sm:flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-slate-100 transition-colors">
               <div className="w-8 h-8 bg-benin-yellow rounded-xl flex items-center justify-center overflow-hidden">
                 {user.photoURL ? (
-                  <img src={user.photoURL} alt="" className="w-full h-full object-cover" />
+                  <ImageWithFallback src={user.photoURL} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <User className="w-4 h-4 text-white" />
                 )}

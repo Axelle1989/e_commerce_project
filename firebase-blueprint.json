@@ -45,6 +45,7 @@
             "properties": {
               "name": { "type": "string" },
               "quantity": { "type": "number" },
+              "unit": { "type": "string" },
               "proposedPricePerUnit": { "type": "number" },
               "total": { "type": "number" }
             }
@@ -69,6 +70,8 @@
         "departureAt": { "type": "string", "format": "date-time" },
         "deliveredLocation": { "type": "object", "description": "Location when order was delivered" },
         "deliveredAt": { "type": "string", "format": "date-time" },
+        "proofPhotos": { "type": "array", "items": { "type": "string" } },
+        "proofStatus": { "type": "string", "enum": ["pending", "submitted", "approved", "rejected"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "items", "totalAmount", "status"]

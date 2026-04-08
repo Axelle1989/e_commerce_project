@@ -7,6 +7,7 @@ import { UserProfile, Order } from '../types';
 import { User, Camera, Loader2, CheckCircle, Mail, Phone, Shield, Package, Clock, MapPin, ChevronRight, Star, Calendar, Trash2, ShieldAlert, Key } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
+import ImageWithFallback from '../components/ImageWithFallback';
 
 interface ProfileProps {
   user: UserProfile;
@@ -151,7 +152,7 @@ export default function Profile({ user }: ProfileProps) {
           <div className="relative group">
             <div className="w-32 h-32 rounded-[40px] bg-slate-50 border-4 border-white shadow-xl overflow-hidden flex items-center justify-center">
               {user.photoURL ? (
-                <img src={user.photoURL} alt="" className="w-full h-full object-cover" />
+                <ImageWithFallback src={user.photoURL} alt="" className="w-full h-full object-cover" />
               ) : (
                 <User className="w-12 h-12 text-slate-200" />
               )}

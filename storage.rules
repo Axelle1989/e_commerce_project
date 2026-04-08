@@ -43,7 +43,7 @@ service firebase.storage {
     
     // ========== PREUVES COMMANDES ==========
     match /orders/{orderId}/{fileName} {
-      allow read: if isAuthenticated();
+      allow read: if true; // Permissive for dev as requested
       allow write: if isAdmin() && isValidImage() && isValidSize();
     }
     

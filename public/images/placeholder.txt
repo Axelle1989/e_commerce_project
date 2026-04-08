@@ -1,0 +1,2 @@
+Placeholder for images directory.
+If you need static images, place them in this directory and reference them as /images/filename.jpg
