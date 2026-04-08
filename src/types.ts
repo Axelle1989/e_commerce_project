@@ -56,6 +56,8 @@ export interface ItemValidation {
   proofVideoUrl?: string;
   proofLocation?: GeoPoint;
   proofTimestamp?: any;
+  skippedProof?: boolean;
+  skipJustification?: string;
 }
 
 export interface ChatMessage {

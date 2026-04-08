@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs, doc, updateDoc, query, orderBy, limit, serverTimestamp, deleteDoc, getDoc, addDoc, onSnapshot } from 'firebase/firestore';
+import { sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { Order, UserProfile, Review, UserStatus, Dispute, AdminChat, AdminChatMessage } from '../types';
 import { 
@@ -29,7 +30,8 @@ import {
   Loader2,
   Plus,
   MessageSquare,
-  Send
+  Send,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ImageWithFallback from '../components/ImageWithFallback';
@@ -317,6 +319,17 @@ export default function BackOffice() {
       setReviews(reviews.filter(r => r.id !== reviewId));
     } catch (error) {
       console.error('Error deleting review:', error);
+    }
+  };
+
+  const resetUserPassword = async (email: string) => {
+    if (!window.confirm(`Envoyer un email de réinitialisation de mot de passe à ${email} ?`)) return;
+    try {
+      await sendPasswordResetEmail(auth, email);
+      alert(`Email de réinitialisation envoyé à ${email}`);
+    } catch (error: any) {
+      console.error('Error resetting password:', error);
+      alert(`Erreur: ${error.message}`);
     }
   };
 
@@ -1169,6 +1182,13 @@ export default function BackOffice() {
                             </td>
                             <td className="px-8 py-6 text-right">
                               <div className="flex items-center justify-end gap-2">
+                                <button 
+                                  onClick={() => resetUserPassword(user.email)}
+                                  className="p-2 bg-slate-100 text-slate-400 hover:text-benin-yellow hover:bg-benin-yellow/10 rounded-xl transition-all"
+                                  title="Réinitialiser le mot de passe"
+                                >
+                                  <Key className="w-4 h-4" />
+                                </button>
                                 <button 
                                   onClick={() => toggleUserSuspension(user)}
                                   className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${

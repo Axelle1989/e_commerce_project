@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, addDoc, collection, serverTimestamp, runTransaction, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, auth, storage } from '../firebase';
 import { Order, OrderStatus, GeoPoint, UserProfile } from '../types';
-import { MapPin, Truck, Store, CheckCircle2, Navigation, Bell, Phone, MessageSquare, Loader2, ArrowRight, CheckCircle, TrendingUp, ShieldAlert, RefreshCw, Camera, X, Image as ImageIcon, Video, AlertCircle, User } from 'lucide-react';
+import { MapPin, Truck, Store, CheckCircle2, Navigation, Bell, Phone, MessageSquare, Loader2, ArrowRight, CheckCircle, TrendingUp, ShieldAlert, RefreshCw, Camera, X, Image as ImageIcon, Video, AlertCircle, User, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Circle } from 'react-leaflet';
 import L from 'leaflet';
@@ -73,6 +73,9 @@ export default function DriverActive() {
   const [showProofModal, setShowProofModal] = useState(false);
   const [uploadingItemProof, setUploadingItemProof] = useState<{index: number, type: 'photo' | 'video'} | null>(null);
   const [activeTab, setActiveTab] = useState<'mission' | 'chat'>('mission');
+  const [pendingUploads, setPendingUploads] = useState<number>(0);
+  const [showSkipJustification, setShowSkipJustification] = useState<number | null>(null);
+  const [skipJustification, setSkipJustification] = useState('');
   
   const { location, error: locationError, requestPermission, permissionStatus } = useLiveLocation(order?.status);
 
@@ -138,10 +141,19 @@ export default function DriverActive() {
   const updateStatus = async (newStatus: OrderStatus, message: string) => {
     if (!orderId || !order || !auth.currentUser) return;
 
-    // Enforce proof of purchase before delivering
-    if (newStatus === 'delivering' && (!order.proofPhotos || order.proofPhotos.length === 0)) {
-      alert("Veuillez ajouter au moins une photo de preuve d'achat avant de partir du marché.");
+    // Enforce proof of purchase before delivering (unless skipped)
+    const hasProofs = order.proofPhotos && order.proofPhotos.length > 0;
+    const hasSkipped = order.itemsValidation && Object.values(order.itemsValidation).some(v => v.skippedProof);
+    
+    if (newStatus === 'delivering' && !hasProofs && !hasSkipped) {
+      alert("Veuillez ajouter au moins une photo de preuve d'achat ou justifier l'absence de preuve.");
       return;
+    }
+
+    if (pendingUploads > 0) {
+      if (!window.confirm(`Il y a encore ${pendingUploads} téléchargement(s) en cours. Voulez-vous continuer quand même ?`)) {
+        return;
+      }
     }
 
     setUpdating(true);
@@ -225,90 +237,137 @@ export default function DriverActive() {
     const file = e.target.files?.[0];
     if (!file || !orderId || !auth.currentUser) return;
 
+    setPendingUploads(prev => prev + 1);
     setUploadingProof(true);
-    try {
-      // Simple compression using Canvas
-      const compressedFile = await compressImage(file);
-      
-      const storageRef = ref(storage, `orders/${orderId}/proofs/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, compressedFile);
-      const downloadURL = await getDownloadURL(storageRef);
 
-      const currentPhotos = order.proofPhotos || [];
-      await updateDoc(doc(db, 'orders', orderId), {
-        proofPhotos: [...currentPhotos, downloadURL],
-        proofStatus: 'submitted'
-      });
+    const uploadPromise = (async () => {
+      let timeoutReached = false;
+      const timeout = setTimeout(() => {
+        timeoutReached = true;
+        console.warn('Upload taking too long, continuing in background');
+        setUploadingProof(false); // Allow UI to continue
+      }, 10000);
 
-      // Notify client
-      await addDoc(collection(db, 'notifications'), {
-        orderId,
-        userId: order.userId,
-        driverId: auth.currentUser.uid,
-        type: 'proof_added',
-        message: "Le livreur a ajouté des preuves d'achat pour votre commande.",
-        timestamp: serverTimestamp(),
-        read: false
-      });
+      try {
+        let finalFile: Blob | File = file;
+        if (file.type.startsWith('image/')) {
+          finalFile = await compressImage(file, 500 * 1024);
+        } else if (file.type.startsWith('video/')) {
+          if (file.size > 5 * 1024 * 1024) {
+            alert("La vidéo est trop lourde (Max 5Mo).");
+            setPendingUploads(prev => prev - 1);
+            setUploadingProof(false);
+            clearTimeout(timeout);
+            return;
+          }
+        }
+        
+        const storageRef = ref(storage, `orders/${orderId}/proofs/${Date.now()}_${file.name}`);
+        await uploadBytes(storageRef, finalFile);
+        const downloadURL = await getDownloadURL(storageRef);
 
-    } catch (error) {
-      console.error('Error uploading proof:', error);
-      alert("Erreur lors de l'envoi de la photo.");
-    } finally {
-      setUploadingProof(false);
-    }
+        const orderRef = doc(db, 'orders', orderId);
+        const orderSnap = await getDoc(orderRef);
+        if (orderSnap.exists()) {
+          const currentData = orderSnap.data() as Order;
+          const currentPhotos = currentData.proofPhotos || [];
+          await updateDoc(orderRef, {
+            proofPhotos: [...currentPhotos, downloadURL],
+            proofStatus: 'submitted'
+          });
+        }
+
+        // Notify client
+        await addDoc(collection(db, 'notifications'), {
+          orderId,
+          userId: order.userId,
+          driverId: auth.currentUser!.uid,
+          type: 'proof_added',
+          message: "Le livreur a ajouté des preuves d'achat pour votre commande.",
+          timestamp: serverTimestamp(),
+          read: false
+        });
+
+      } catch (error) {
+        console.error('Error uploading proof:', error);
+        alert("Erreur lors de l'envoi de la photo.");
+      } finally {
+        setPendingUploads(prev => prev - 1);
+        if (!timeoutReached) setUploadingProof(false);
+        clearTimeout(timeout);
+      }
+    })();
   };
 
   const handleItemFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, itemIndex: number, type: 'photo' | 'video') => {
     const file = e.target.files?.[0];
     if (!file || !orderId || !auth.currentUser || !order) return;
 
-    // Video limit 10s
-    if (type === 'video' && file.size > 10 * 1024 * 1024) {
-      alert("La vidéo est trop lourde. Max 10Mo.");
-      return;
-    }
-
+    setPendingUploads(prev => prev + 1);
     setUploadingItemProof({ index: itemIndex, type });
-    try {
-      let finalFile: Blob | File = file;
-      if (type === 'photo') {
-        finalFile = await compressImage(file);
+
+    const uploadPromise = (async () => {
+      let timeoutReached = false;
+      const timeout = setTimeout(() => {
+        timeoutReached = true;
+        setUploadingItemProof(null); // Allow UI to continue
+      }, 10000);
+
+      try {
+        let finalFile: Blob | File = file;
+        if (type === 'photo') {
+          finalFile = await compressImage(file, 500 * 1024);
+        } else if (type === 'video') {
+          if (file.size > 5 * 1024 * 1024) {
+            alert("La vidéo est trop lourde (Max 5Mo).");
+            setPendingUploads(prev => prev - 1);
+            setUploadingItemProof(null);
+            clearTimeout(timeout);
+            return;
+          }
+        }
+        
+        const storageRef = ref(storage, `orders/${orderId}/items/${itemIndex}/${Date.now()}_${file.name}`);
+        await uploadBytes(storageRef, finalFile);
+        const downloadURL = await getDownloadURL(storageRef);
+
+        const orderRef = doc(db, 'orders', orderId);
+        const orderSnap = await getDoc(orderRef);
+        if (orderSnap.exists()) {
+          const currentOrder = orderSnap.id === orderId ? { ...orderSnap.data(), id: orderSnap.id } as Order : order;
+          const validations = { ...(currentOrder.itemsValidation || {}) };
+          if (!validations[itemIndex]) {
+            validations[itemIndex] = {
+              itemId: itemIndex.toString(),
+              clientApproved: null,
+              driverActualPrice: order.items[itemIndex].proposedPricePerUnit,
+              driverActualQuantity: order.items[itemIndex].quantity,
+              proofPhotos: [],
+              proofLocation: location || currentLocation || undefined,
+              proofTimestamp: new Date()
+            };
+          }
+
+          if (type === 'photo') {
+            validations[itemIndex].proofPhotos = [...validations[itemIndex].proofPhotos, downloadURL];
+          } else {
+            validations[itemIndex].proofVideoUrl = downloadURL;
+          }
+
+          await updateDoc(orderRef, {
+            itemsValidation: validations
+          });
+        }
+
+      } catch (error) {
+        console.error('Error uploading item proof:', error);
+        alert("Erreur lors de l'envoi du fichier.");
+      } finally {
+        setPendingUploads(prev => prev - 1);
+        if (!timeoutReached) setUploadingItemProof(null);
+        clearTimeout(timeout);
       }
-      
-      const storageRef = ref(storage, `orders/${orderId}/items/${itemIndex}/${Date.now()}_${file.name}`);
-      await uploadBytes(storageRef, finalFile);
-      const downloadURL = await getDownloadURL(storageRef);
-
-      const validations = { ...(order.itemsValidation || {}) };
-      if (!validations[itemIndex]) {
-        validations[itemIndex] = {
-          itemId: itemIndex.toString(),
-          clientApproved: null,
-          driverActualPrice: order.items[itemIndex].proposedPricePerUnit,
-          driverActualQuantity: order.items[itemIndex].quantity,
-          proofPhotos: [],
-          proofLocation: location || currentLocation || undefined,
-          proofTimestamp: new Date()
-        };
-      }
-
-      if (type === 'photo') {
-        validations[itemIndex].proofPhotos = [...validations[itemIndex].proofPhotos, downloadURL];
-      } else {
-        validations[itemIndex].proofVideoUrl = downloadURL;
-      }
-
-      await updateDoc(doc(db, 'orders', orderId), {
-        itemsValidation: validations
-      });
-
-    } catch (error) {
-      console.error('Error uploading item proof:', error);
-      alert("Erreur lors de l'envoi du fichier.");
-    } finally {
-      setUploadingItemProof(null);
-    }
+    })();
   };
 
   const updateItemValidation = async (index: number, field: string, value: any) => {
@@ -331,7 +390,7 @@ export default function DriverActive() {
     });
   };
 
-  const compressImage = (file: File): Promise<Blob> => {
+  const compressImage = (file: File, maxSizeBytes: number = 500 * 1024): Promise<Blob> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -358,9 +417,18 @@ export default function DriverActive() {
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, width, height);
           
-          canvas.toBlob((blob) => {
-            resolve(blob || file);
-          }, 'image/jpeg', 0.7); // 0.7 quality for compression
+          let quality = 0.7;
+          const attemptCompression = () => {
+            canvas.toBlob((blob) => {
+              if (blob && blob.size > maxSizeBytes && quality > 0.1) {
+                quality -= 0.1;
+                attemptCompression();
+              } else {
+                resolve(blob || file);
+              }
+            }, 'image/jpeg', quality);
+          };
+          attemptCompression();
         };
       };
     });
@@ -598,7 +666,7 @@ export default function DriverActive() {
                               )}
                               
                               {order.status === 'at_market' && (
-                                <>
+                                <div className="flex flex-wrap gap-3">
                                   <label className="w-20 h-20 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-400 hover:border-benin-green hover:text-benin-green transition-all cursor-pointer">
                                     {uploadingItemProof?.index === index && uploadingItemProof?.type === 'photo' ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
                                     <span className="text-[8px] font-black uppercase">Photo</span>
@@ -609,12 +677,68 @@ export default function DriverActive() {
                                     <span className="text-[8px] font-black uppercase">Vidéo</span>
                                     <input type="file" className="hidden" accept="video/*" onChange={(e) => handleItemFileUpload(e, index, 'video')} disabled={!!uploadingItemProof} />
                                   </label>
-                                </>
+                                  
+                                  <button 
+                                    onClick={() => setShowSkipJustification(index)}
+                                    className="w-20 h-20 rounded-2xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center gap-1 text-slate-400 hover:border-benin-red hover:text-benin-red transition-all"
+                                  >
+                                    <XCircle className="w-5 h-5" />
+                                    <span className="text-[8px] font-black uppercase">Sauter</span>
+                                  </button>
+                                </div>
                               )}
+
+                              <AnimatePresence>
+                                {showSkipJustification === index && (
+                                  <motion.div 
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    className="space-y-3 bg-white p-4 rounded-2xl border border-slate-100"
+                                  >
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Justification (ex: marché bondé)</p>
+                                    <textarea 
+                                      value={skipJustification}
+                                      onChange={(e) => setSkipJustification(e.target.value)}
+                                      className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 text-xs font-medium outline-none focus:ring-2 focus:ring-benin-red"
+                                      rows={2}
+                                    />
+                                    <div className="flex gap-2">
+                                      <button 
+                                        onClick={() => {
+                                          updateItemValidation(index, 'skippedProof', true);
+                                          updateItemValidation(index, 'skipJustification', skipJustification);
+                                          setShowSkipJustification(null);
+                                          setSkipJustification('');
+                                        }}
+                                        className="flex-1 py-2 bg-benin-red text-white rounded-xl text-[10px] font-black uppercase"
+                                      >
+                                        Confirmer
+                                      </button>
+                                      <button 
+                                        onClick={() => setShowSkipJustification(null)}
+                                        className="flex-1 py-2 bg-slate-100 text-slate-600 rounded-xl text-[10px] font-black uppercase"
+                                      >
+                                        Annuler
+                                      </button>
+                                    </div>
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
                             </div>
                           </div>
                           
-                          {validation?.clientRemark && (
+                            {validation?.skippedProof && (
+                              <div className="p-4 bg-slate-100 border border-slate-200 rounded-2xl flex items-start gap-3">
+                                <ShieldAlert className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+                                <div>
+                                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Preuve sautée</p>
+                                  <p className="text-xs font-medium text-slate-600 italic">"{validation.skipJustification}"</p>
+                                </div>
+                              </div>
+                            )}
+                            
+                            {validation?.clientRemark && (
                             <div className="p-4 bg-benin-yellow/10 border border-benin-yellow/20 rounded-2xl flex items-start gap-3">
                               <AlertCircle className="w-4 h-4 text-benin-yellow shrink-0 mt-0.5" />
                               <div>
