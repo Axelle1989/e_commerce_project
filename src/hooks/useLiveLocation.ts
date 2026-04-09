@@ -74,7 +74,7 @@ export function useLiveLocation(status?: OrderStatus) {
     const now = Date.now();
 
     // Frequency logic
-    const minInterval = status === 'delivering' ? 5000 : 30000;
+    const minInterval = status === 'delivering' ? 5000 : (['at_market', 'shopping_completed'].includes(status || '') ? 10000 : 30000);
     if (!force && now - lastEmitTimeRef.current < minInterval) {
       return;
     }
@@ -135,7 +135,7 @@ export function useLiveLocation(status?: OrderStatus) {
       );
 
       // Periodic fallback to ensure updates even if immobile
-      const interval = status === 'delivering' ? 5000 : 30000;
+      const interval = status === 'delivering' ? 5000 : (['at_market', 'shopping_completed'].includes(status || '') ? 10000 : 30000);
       intervalIdRef.current = setInterval(() => {
         navigator.geolocation.getCurrentPosition(
           (pos) => handleNewPosition(pos),

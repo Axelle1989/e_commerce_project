@@ -125,7 +125,7 @@ export default function DriverActive() {
         setCurrentLocation(locationWithAddress);
 
         // Update Firestore
-        if (auth.currentUser && orderId) {
+        if (auth.currentUser && orderId && order && ['at_market', 'shopping_completed', 'delivering'].includes(order.status)) {
           updateDoc(doc(db, 'orders', orderId), {
             driverLocation: locationWithAddress
           });
