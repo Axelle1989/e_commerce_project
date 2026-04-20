@@ -92,17 +92,21 @@ export default function Register() {
         });
 
         console.log(`[DEMO] Code de vérification envoyé à ${email}: ${code}`);
-        alert(`[DEMO] Pour l'email ${email}, votre code est : ${code}`);
+        // Information about the simulation for the user
+        alert(`[INFO] Pour cette démonstration, le code envoyé à votre email ${email} est : ${code}`);
         
         navigate('/verify', { state: { verificationId: pendingRef.id, email, mode: 'email' } });
       } else {
         // Phone Auth with Firebase
+        // Normalize phone number: remove any non-digit except '+'
+        const normalizedPhone = phoneNumber!.replace(/[^\d+]/g, '');
+        
         const appVerifier = window.recaptchaVerifier;
-        const result = await signInWithPhoneNumber(auth, phoneNumber!, appVerifier);
+        const result = await signInWithPhoneNumber(auth, normalizedPhone, appVerifier);
         
         const expiresAt = new Date(Date.now() + 10 * 60000);
         const pendingRef = await addDoc(collection(db, 'pending_verifications'), {
-          phone: phoneNumber?.replace(/\s/g, ''),
+          phone: normalizedPhone,
           expiresAt,
           userData: { nom, role, password },
           createdAt: serverTimestamp()
@@ -110,18 +114,24 @@ export default function Register() {
 
         window.confirmationResult = result;
         
-        navigate('/verify', { state: { verificationId: pendingRef.id, phone: phoneNumber, mode: 'phone' } });
+        navigate('/verify', { state: { verificationId: pendingRef.id, phone: normalizedPhone, mode: 'phone' } });
       }
     } catch (err: any) {
       console.error('Registration Error:', err);
       let message = "Une erreur est survenue lors de l'envoi du code.";
       
       if (err.code === 'auth/operation-not-allowed') {
-        message = "La méthode d'authentification choisie (Email ou Téléphone) n'est pas activée dans votre console Firebase. Veuillez l'activer sous l'onglet Sign-in Method.";
+        if (mode === 'phone') {
+          message = "L'inscription par téléphone nécessite un compte Firebase Blaze. Veuillez utiliser l'email ou contacter l'admin.";
+        } else {
+          message = "La méthode d'authentification par Email n'est pas activée dans votre console Firebase.";
+        }
       } else if (err.code === 'auth/invalid-phone-number') {
         message = "Le numéro de téléphone n'est pas valide.";
       } else if (err.code === 'auth/too-many-requests') {
-        message = "Trop de tentatives. Veuillez réessayer plus tard.";
+        message = "Trop de tentatives (Quota SMS atteint ou détection de spam). Veuillez réessayer plus tard.";
+      } else if (err.code === 'auth/captcha-check-failed') {
+        message = "La vérification reCAPTCHA a échoué. Veuillez rafraîchir la page.";
       } else {
         message = err.message || message;
       }

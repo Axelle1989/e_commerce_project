@@ -128,11 +128,12 @@ export default function Login() {
           }
         }
 
+        const normalizedPhone = phoneNumber.replace(/[^\d+]/g, '');
         const appVerifier = window.recaptchaVerifier;
-        const result = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
+        const result = await signInWithPhoneNumber(auth, normalizedPhone, appVerifier);
         window.confirmationResult = result;
         
-        navigate('/verify', { state: { phone: phoneNumber, mode: 'phone' } });
+        navigate('/verify', { state: { phone: normalizedPhone, mode: 'phone' } });
       }
     } catch (error: any) {
       console.error('Auth Error:', error);
@@ -142,7 +143,16 @@ export default function Login() {
         case 'auth/user-not-found': message = "Aucun utilisateur trouvé."; break;
         case 'auth/wrong-password': message = "Mot de passe incorrect."; break;
         case 'auth/invalid-credential': message = "Identifiants incorrects."; break;
-        case 'auth/operation-not-allowed': message = "La méthode de connexion choisie n'est pas activée. Veuillez l'activer dans la console Firebase."; break;
+        case 'auth/operation-not-allowed': 
+          if (loginMode === 'phone') {
+            message = "L'inscription/connexion par téléphone nécessite un compte Firebase Blaze. Veuillez utiliser l'email ou contacter l'admin.";
+          } else {
+            message = "La méthode de connexion choisie n'est pas activée dans la console Firebase.";
+          }
+          break;
+        case 'auth/too-many-requests':
+          message = "Trop de tentatives (Quota SMS atteint). Veuillez réessayer plus tard.";
+          break;
         default: message = error.message;
       }
       setError(message);
