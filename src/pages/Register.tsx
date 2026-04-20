@@ -114,7 +114,19 @@ export default function Register() {
       }
     } catch (err: any) {
       console.error('Registration Error:', err);
-      setError(err.message || "Une erreur est survenue.");
+      let message = "Une erreur est survenue lors de l'envoi du code.";
+      
+      if (err.code === 'auth/operation-not-allowed') {
+        message = "La méthode d'authentification choisie (Email ou Téléphone) n'est pas activée dans votre console Firebase. Veuillez l'activer sous l'onglet Sign-in Method.";
+      } else if (err.code === 'auth/invalid-phone-number') {
+        message = "Le numéro de téléphone n'est pas valide.";
+      } else if (err.code === 'auth/too-many-requests') {
+        message = "Trop de tentatives. Veuillez réessayer plus tard.";
+      } else {
+        message = err.message || message;
+      }
+      
+      setError(message);
     } finally {
       setLoading(false);
     }
