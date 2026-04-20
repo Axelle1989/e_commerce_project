@@ -134,11 +134,26 @@ export default function VerifyCode() {
       }
     } catch (err: any) {
       console.error('Verification error:', err);
-      if (err.code === 'auth/invalid-verification-code') {
-        setError("Le code saisi est incorrect.");
-      } else {
-        setError(err.message || "Une erreur est survenue.");
+      let message = "Une erreur est survenue lors de la vérification.";
+      
+      switch (err.code) {
+        case 'auth/invalid-verification-code':
+          message = "Le code saisi est incorrect.";
+          break;
+        case 'auth/operation-not-allowed':
+          message = "La connexion par Email/Mot de passe n'est pas activée dans la console Firebase. Veuillez contacter l'administrateur.";
+          break;
+        case 'auth/email-already-in-use':
+          message = "Cette adresse email est déjà utilisée par un autre compte.";
+          break;
+        case 'auth/weak-password':
+          message = "Le mot de passe est trop faible.";
+          break;
+        default:
+          message = err.message || message;
       }
+      
+      setError(message);
     } finally {
       setLoading(false);
     }

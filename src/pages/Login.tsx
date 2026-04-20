@@ -142,6 +142,7 @@ export default function Login() {
         case 'auth/user-not-found': message = "Aucun utilisateur trouvé."; break;
         case 'auth/wrong-password': message = "Mot de passe incorrect."; break;
         case 'auth/invalid-credential': message = "Identifiants incorrects."; break;
+        case 'auth/operation-not-allowed': message = "La méthode de connexion choisie n'est pas activée. Veuillez l'activer dans la console Firebase."; break;
         default: message = error.message;
       }
       setError(message);
