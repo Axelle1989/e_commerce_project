@@ -8,7 +8,10 @@
         "uid": { "type": "string" },
         "email": { "type": "string", "format": "email" },
         "role": { "type": "string", "enum": ["client", "driver", "admin"] },
-        "status": { "type": "string", "enum": ["pending_validation", "active", "suspended", "pending_interview"] },
+        "status": { "type": "string", "enum": ["pending_email_verification", "pending_validation", "active", "suspended", "pending_interview"] },
+        "verificationCode": { "type": "string" },
+        "emailVerified": { "type": "boolean" },
+        "phoneVerified": { "type": "boolean" },
         "nom": { "type": "string" },
         "prenom": { "type": "string" },
         "phone": { "type": "string" },
@@ -104,12 +107,74 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["type", "read", "createdAt"]
+    },
+    "AdminLog": {
+      "title": "AdminLog",
+      "description": "Logs of administrative actions.",
+      "type": "object",
+      "properties": {
+        "adminId": { "type": "string" },
+        "targetUserId": { "type": "string" },
+        "targetUserEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["adminId", "action", "timestamp"]
+    },
+    "AdminReport": {
+      "title": "AdminReport",
+      "description": "Monthly performance reports with AI advice.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "month": { "type": "string" },
+        "year": { "type": "integer" },
+        "stats": {
+          "type": "object",
+          "properties": {
+            "newUsers": { "type": "integer" },
+            "newDrivers": { "type": "integer" },
+            "totalOrders": { "type": "integer" },
+            "deliveredOrders": { "type": "integer" },
+            "cancelledOrders": { "type": "integer" },
+            "totalRevenue": { "type": "number" },
+            "disputesCount": { "type": "integer" }
+          }
+        },
+        "advice": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["month", "year", "stats", "advice", "createdAt"]
+    },
+    "PendingVerification": {
+      "title": "PendingVerification",
+      "description": "Temporary storage for user registration data awaiting verification.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "code": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "userData": {
+          "type": "object",
+          "properties": {
+            "nom": { "type": "string" },
+            "role": { "type": "string" },
+            "password": { "type": "string" }
+          }
+        }
+      },
+      "required": ["code", "expiresAt"]
     }
   },
   "firestore": {
     "users/{userId}": {
       "schema": "User",
       "description": "User profiles"
+    },
+    "pending_verifications/{verificationId}": {
+      "schema": "PendingVerification",
+      "description": "Registration attempts awaiting code verification"
     },
     "orders/{orderId}": {
       "schema": "Order",
@@ -122,6 +187,14 @@
     "admin_notifications/{notifId}": {
       "schema": "AdminNotification",
       "description": "Admin notifications"
+    },
+    "admin_logs/{logId}": {
+      "schema": "AdminLog",
+      "description": "Logs of admin actions"
+    },
+    "admin_reports/{reportId}": {
+      "schema": "AdminReport",
+      "description": "Monthly admin reports"
     },
     "settings/{settingId}": {
       "schema": {

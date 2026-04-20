@@ -1,11 +1,14 @@
 export type UserRole = 'client' | 'driver' | 'admin';
-export type UserStatus = 'pending_validation' | 'active' | 'suspended' | 'rejected' | 'pending_interview' | 'interview_scheduled';
+export type UserStatus = 'pending_email_verification' | 'pending_validation' | 'active' | 'suspended' | 'rejected' | 'pending_interview' | 'interview_scheduled';
 
 export interface UserProfile {
   uid: string;
   email: string;
   role: UserRole;
   status: UserStatus;
+  verificationCode?: string;
+  emailVerified?: boolean;
+  phoneVerified?: boolean;
   nom?: string;
   prenom?: string;
   phone?: string;
@@ -33,6 +36,10 @@ export interface UserProfile {
   createdAt: any;
   validatedAt?: any;
   displayName?: string; // For compatibility with Firebase Auth
+  isDeleted?: boolean;
+  active?: boolean;
+  suspended?: boolean;
+  deletedAt?: any;
 }
 
 export type OrderStatus = 'awaiting_payment' | 'pending' | 'accepted' | 'at_market' | 'shopping_completed' | 'delivering' | 'delivered' | 'cancelled' | 'disputed';
@@ -164,5 +171,22 @@ export interface Product {
   category: string;
   image?: string;
   available: boolean;
+  createdAt: any;
+}
+
+export interface AdminReport {
+  id: string;
+  month: string;
+  year: number;
+  stats: {
+    newUsers: number;
+    newDrivers: number;
+    totalOrders: number;
+    deliveredOrders: number;
+    cancelledOrders: number;
+    totalRevenue: number;
+    disputesCount: number;
+  };
+  advice: string;
   createdAt: any;
 }

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { updateDoc, doc, collection, query, where, orderBy, onSnapshot, deleteDoc, writeBatch, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, listAll, deleteObject } from 'firebase/storage';
-import { EmailAuthProvider, reauthenticateWithCredential, deleteUser } from 'firebase/auth';
+import { EmailAuthProvider, reauthenticateWithCredential, deleteUser, updatePassword } from 'firebase/auth';
 import { db, auth, storage } from '../firebase';
 import { UserProfile, Order } from '../types';
-import { User, Camera, Loader2, CheckCircle, Mail, Phone, Shield, Package, Clock, MapPin, ChevronRight, Star, Calendar, Trash2, ShieldAlert, Key } from 'lucide-react';
+import { User, Camera, Loader2, CheckCircle, Mail, Phone, Shield, Package, Clock, MapPin, ChevronRight, Star, Calendar, Trash2, ShieldAlert, Key, Lock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import ImageWithFallback from '../components/ImageWithFallback';
@@ -22,6 +22,16 @@ export default function Profile({ user }: ProfileProps) {
   // Deletion state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteStep, setDeleteStep] = useState<'password' | 'confirm'>('password');
+  
+  // Password change state
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [updatingPassword, setUpdatingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
+
   const [password, setPassword] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -87,6 +97,47 @@ export default function Profile({ user }: ProfileProps) {
       setDeleteError('Mot de passe incorrect. Veuillez réessayer.');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth.currentUser || !user.email) return;
+
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError("Les nouveaux mots de passe ne correspondent pas.");
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setPasswordError("Le nouveau mot de passe doit faire au moins 6 caractères.");
+      return;
+    }
+
+    setUpdatingPassword(true);
+    setPasswordError('');
+    try {
+      const credential = EmailAuthProvider.credential(user.email, currentPassword);
+      await reauthenticateWithCredential(auth.currentUser, credential);
+      await updatePassword(auth.currentUser, newPassword);
+      
+      setPasswordSuccess(true);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setTimeout(() => {
+        setPasswordSuccess(false);
+        setShowPasswordModal(false);
+      }, 2000);
+    } catch (error: any) {
+      console.error('Password update error:', error);
+      if (error.code === 'auth/wrong-password') {
+        setPasswordError("L'ancien mot de passe est incorrect.");
+      } else {
+        setPasswordError(error.message);
+      }
+    } finally {
+      setUpdatingPassword(false);
     }
   };
 
@@ -206,6 +257,18 @@ export default function Profile({ user }: ProfileProps) {
               </div>
             </div>
             {user.status === 'active' && <CheckCircle className="w-6 h-6 text-benin-green" />}
+          </div>
+        )}
+
+        {user.status === 'active' && user.email && (
+          <div className="pt-6 border-t border-slate-50 flex flex-col gap-4">
+             <button 
+              onClick={() => setShowPasswordModal(true)}
+              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-xs hover:bg-black transition-all flex items-center justify-center gap-2 shadow-xl shadow-slate-900/10"
+            >
+              <Key className="w-5 h-5" />
+              MODIFIER MON MOT DE PASSE
+            </button>
           </div>
         )}
 
@@ -338,6 +401,113 @@ export default function Profile({ user }: ProfileProps) {
           )}
         </div>
       </div>
+
+      {/* Change Password Modal */}
+      <AnimatePresence>
+        {showPasswordModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => !updatingPassword && setShowPasswordModal(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[40px] shadow-2xl p-10 space-y-8"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-3 bg-benin-green/10 rounded-xl">
+                    <Key className="w-6 h-6 text-benin-green" />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-900 tracking-tight">Mot de passe</h3>
+                </div>
+                <button 
+                  onClick={() => setShowPasswordModal(false)}
+                  className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                >
+                  <X className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+
+              {passwordSuccess ? (
+                <div className="py-12 flex flex-col items-center justify-center gap-4 text-center">
+                  <div className="w-20 h-20 bg-benin-green rounded-full flex items-center justify-center text-white shadow-xl shadow-benin-green/20">
+                    <CheckCircle className="w-10 h-10" />
+                  </div>
+                  <h4 className="text-xl font-black text-slate-900">Mise à jour réussie</h4>
+                  <p className="text-slate-500 font-medium">Votre mot de passe a bien été modifié.</p>
+                </div>
+              ) : (
+                <form onSubmit={handleUpdatePassword} className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ancien mot de passe</label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="password" 
+                        required
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-4 py-4 text-sm font-medium focus:ring-2 focus:ring-benin-green outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nouveau mot de passe</label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="password" 
+                        required
+                        minLength={6}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-4 py-4 text-sm font-medium focus:ring-2 focus:ring-benin-green outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Confirmer le nouveau</label>
+                    <div className="relative">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input 
+                        type="password" 
+                        required
+                        value={confirmNewPassword}
+                        onChange={(e) => setConfirmNewPassword(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-100 rounded-2xl pl-12 pr-4 py-4 text-sm font-medium focus:ring-2 focus:ring-benin-green outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {passwordError && (
+                    <p className="text-xs font-black text-benin-red text-center">{passwordError}</p>
+                  )}
+
+                  <button 
+                    type="submit"
+                    disabled={updatingPassword}
+                    className="w-full py-4 bg-benin-green text-white rounded-2xl font-black text-xs shadow-xl shadow-benin-green/20 hover:bg-benin-green/90 transition-all flex items-center justify-center gap-2"
+                  >
+                    {updatingPassword ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      "ENREGISTRER LE NOUVEAU MOT DE PASSE"
+                    )}
+                  </button>
+                </form>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Delete Account Modal */}
       <AnimatePresence>

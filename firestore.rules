@@ -20,6 +20,11 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isOwner(userId) || isAdmin();
     }
+
+    match /pending_verifications/{versionId} {
+      allow create: if true;
+      allow read, delete: if true; // Client needs to verify code and then cleanup
+    }
     
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || resource.data.driverId == request.auth.uid || isAdmin());
@@ -48,6 +53,10 @@ service cloud.firestore {
     }
 
     match /admin_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /admin_reports/{reportId} {
       allow read, write: if isAdmin();
     }
 

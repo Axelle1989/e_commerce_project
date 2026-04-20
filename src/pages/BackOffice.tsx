@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { collection, getDocs, doc, updateDoc, query, orderBy, limit, serverTimestamp, deleteDoc, getDoc, addDoc, onSnapshot } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { Order, UserProfile, Review, UserStatus, Dispute, AdminChat, AdminChatMessage } from '../types';
+import { Order, UserProfile, Review, UserStatus, Dispute, AdminChat, AdminChatMessage, AdminReport } from '../types';
 import { 
   LayoutDashboard, 
   ShoppingBag, 
@@ -31,14 +31,17 @@ import {
   Plus,
   MessageSquare,
   Send,
-  Key
+  Key,
+  Sparkles,
+  FileText
 } from 'lucide-react';
+import { GoogleGenAI } from "@google/genai";
 import { motion, AnimatePresence } from 'motion/react';
 import ImageWithFallback from '../components/ImageWithFallback';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell } from 'recharts';
 
 export default function BackOffice() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'orders' | 'users' | 'drivers' | 'reviews' | 'candidatures' | 'settings' | 'disputes' | 'chats'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'orders' | 'users' | 'drivers' | 'reviews' | 'candidatures' | 'settings' | 'disputes' | 'chats' | 'reports'>('dashboard');
   const [userFilter, setUserFilter] = useState<'all' | 'client' | 'driver' | 'admin'>('all');
   const [orders, setOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -46,10 +49,12 @@ export default function BackOffice() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [chats, setChats] = useState<AdminChat[]>([]);
+  const [reports, setReports] = useState<AdminReport[]>([]);
   const [selectedChat, setSelectedChat] = useState<AdminChat | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [generatingReport, setGeneratingReport] = useState(false);
   const [deliverySettings, setDeliverySettings] = useState({ fixedFee: 500 });
   const [units, setUnits] = useState<{ id: string, label: string }[]>([]);
   const [newUnit, setNewUnit] = useState({ id: '', label: '' });
@@ -117,6 +122,9 @@ export default function BackOffice() {
 
         const unitSnap = await getDocs(collection(db, 'units')).catch(e => handleFirestoreError(e, OperationType.LIST, 'units'));
         setUnits(unitSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)));
+
+        const reportSnap = await getDocs(query(collection(db, 'admin_reports'), orderBy('createdAt', 'desc'))).catch(e => handleFirestoreError(e, OperationType.LIST, 'admin_reports'));
+        setReports(reportSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as AdminReport)));
       } catch (error) {
         console.error('Error fetching backoffice data:', error);
       } finally {
@@ -352,10 +360,10 @@ export default function BackOffice() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Erreur lors de la suppression');
 
-      setUsers(users.filter(u => u.uid !== selectedUserToDelete.uid));
+      setUsers(users.map(u => u.uid === selectedUserToDelete.uid ? { ...u, status: 'suspended', isDeleted: true, active: false } : u));
       setShowDeleteUserModal(false);
       setSelectedUserToDelete(null);
-      // alert('Compte supprimé avec succès');
+      alert('Compte supprimé/désactivé avec succès');
     } catch (error: any) {
       console.error('Error deleting user:', error);
       // alert(`Erreur: ${error.message}`);
@@ -435,6 +443,74 @@ export default function BackOffice() {
     }
   };
 
+  const generateMonthlyReport = async () => {
+    if (!auth.currentUser) return;
+    setGeneratingReport(true);
+    try {
+      const idToken = await auth.currentUser.getIdToken();
+      const now = new Date();
+      const monthNames = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
+      const currentMonth = monthNames[now.getMonth()];
+      const currentYear = now.getFullYear();
+
+      // 1. Get stats from backend
+      const response = await fetch('/api/admin/monthly-stats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          month: currentMonth,
+          year: currentYear,
+          adminUid: auth.currentUser.uid,
+          idToken
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Erreur stats');
+      const { stats } = data;
+
+      // 2. Get AI advice using Gemini
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const prompt = `En tant qu'expert en logistique et livraison pour une application au Bénin, analyse ces statistiques mensuelles et donne des conseils stratégiques courts et percutants à l'administrateur.
+      Stats:
+      - Nouveaux clients: ${stats.newUsers}
+      - Nouveaux livreurs: ${stats.newDrivers}
+      - Total commandes: ${stats.totalOrders}
+      - Commandes livrées: ${stats.deliveredOrders}
+      - Commandes annulées: ${stats.cancelledOrders}
+      - Chiffre d'affaires: ${stats.totalRevenue} FCFA
+      - Litiges: ${stats.disputesCount}
+      
+      Donne 4 conseils sous forme de liste à puces. Sois spécifique au contexte béninois si possible.`;
+
+      const aiResponse = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+      });
+
+      const advice = aiResponse.text || "Pas de conseils disponibles pour le moment.";
+
+      // 3. Save report to Firestore
+      const reportData = {
+        month: currentMonth,
+        year: currentYear,
+        stats,
+        advice,
+        createdAt: serverTimestamp()
+      };
+
+      const docRef = await addDoc(collection(db, 'admin_reports'), reportData);
+      setReports([{ id: docRef.id, ...reportData, createdAt: new Date() } as any, ...reports]);
+      
+      alert('Rapport généré avec succès !');
+    } catch (error) {
+      console.error('Error generating report:', error);
+      alert('Erreur lors de la génération du rapport');
+    } finally {
+      setGeneratingReport(false);
+    }
+  };
+
   if (loading) return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-benin-green"></div>
@@ -477,6 +553,7 @@ export default function BackOffice() {
               { id: 'chats', label: 'Chats Livreurs', icon: MessageSquare, badge: chats.reduce((sum, c) => sum + (c.unreadCountAdmin || 0), 0) },
               { id: 'disputes', label: 'Litiges', icon: ShieldAlert, badge: pendingDisputesCount },
               { id: 'users', label: 'Utilisateurs', icon: Users },
+              { id: 'reports', label: 'Conseils IA', icon: Sparkles },
               { id: 'reviews', label: 'Avis & Modération', icon: CheckCircle },
               { id: 'settings', label: 'Paramètres', icon: Settings },
             ].map(tab => (
@@ -914,12 +991,23 @@ export default function BackOffice() {
                             <span className="text-sm font-black">★</span>
                             <span className="text-xs font-black text-slate-900">{user.noteMoyenne || '5.0'}</span>
                           </div>
-                          <button 
-                            onClick={() => toggleUserSuspension(user)}
-                            className="text-[10px] font-black text-benin-red uppercase tracking-widest hover:underline"
-                          >
-                            Suspendre
-                          </button>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => toggleUserSuspension(user)}
+                              className="text-[10px] font-black text-benin-red uppercase tracking-widest hover:underline"
+                            >
+                              Suspendre
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setSelectedUserToDelete(user);
+                                setShowDeleteUserModal(true);
+                              }}
+                              className="text-[10px] font-black text-benin-red uppercase tracking-widest hover:underline"
+                            >
+                              Supprimer
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1170,7 +1258,11 @@ export default function BackOffice() {
                               </span>
                             </td>
                             <td className="px-8 py-6">
-                              {user.status === 'suspended' ? (
+                              {user.isDeleted ? (
+                                <span className="flex items-center gap-2 text-xs font-black text-slate-400">
+                                  <Trash2 className="w-4 h-4" /> Supprimé
+                                </span>
+                              ) : user.status === 'suspended' ? (
                                 <span className="flex items-center gap-2 text-xs font-black text-benin-red">
                                   <ShieldAlert className="w-4 h-4" /> Suspendu
                                 </span>
@@ -1197,16 +1289,17 @@ export default function BackOffice() {
                                 >
                                   {user.status === 'suspended' ? 'Réactiver' : 'Suspendre'}
                                 </button>
-                                {user.uid !== auth.currentUser?.uid && (
+                                {user.uid !== auth.currentUser?.uid && !user.isDeleted && (
                                   <button 
                                     onClick={() => {
                                       setSelectedUserToDelete(user);
                                       setShowDeleteUserModal(true);
                                     }}
-                                    className="p-2 bg-slate-100 text-slate-400 hover:text-benin-red hover:bg-benin-red/10 rounded-xl transition-all"
+                                    className="flex items-center gap-2 px-4 py-2 bg-benin-red text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-benin-red/90 transition-all shadow-lg shadow-benin-red/20"
                                     title="Supprimer le compte"
                                   >
-                                    <Trash2 className="w-4 h-4" />
+                                    <Trash2 className="w-3 h-3" />
+                                    SUPPRIMER DÉFINITIVEMENT
                                   </button>
                                 )}
                               </div>
@@ -1374,6 +1467,103 @@ export default function BackOffice() {
                         <div className="max-w-xs">
                           <h3 className="text-xl font-black text-slate-900">Support Livreurs</h3>
                           <p className="text-sm text-slate-500 font-medium">Sélectionnez une conversation pour commencer à discuter avec un livreur.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'reports' && (
+                <div className="space-y-12">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-3xl font-black text-slate-900 tracking-tight">Conseils IA & Rapports</h2>
+                      <p className="text-slate-500 font-medium">Analyse mensuelle automatisée de vos performances.</p>
+                    </div>
+                    <button 
+                      onClick={generateMonthlyReport}
+                      disabled={generatingReport}
+                      className="flex items-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-sm shadow-xl hover:bg-black transition-all disabled:opacity-50"
+                    >
+                      {generatingReport ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5 text-benin-yellow" />}
+                      GÉNÉRER LE RAPPORT DU MOIS
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-8">
+                    {reports.map((report) => (
+                      <motion.div 
+                        key={report.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="bg-white rounded-[40px] border border-slate-100 shadow-sm overflow-hidden"
+                      >
+                        <div className="p-10 border-b border-slate-50 bg-slate-50/30 flex items-center justify-between">
+                          <div className="flex items-center gap-6">
+                            <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center">
+                              <Calendar className="w-8 h-8 text-benin-green" />
+                            </div>
+                            <div>
+                              <h3 className="text-2xl font-black text-slate-900">{report.month} {report.year}</h3>
+                              <p className="text-xs text-slate-400 font-black uppercase tracking-widest">Rapport de performance</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 px-6 py-3 bg-benin-green/10 text-benin-green rounded-2xl text-xs font-black">
+                            <CheckCircle className="w-4 h-4" /> ANALYSE TERMINÉE
+                          </div>
+                        </div>
+
+                        <div className="p-10 grid grid-cols-1 lg:grid-cols-3 gap-12">
+                          <div className="lg:col-span-1 space-y-8">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Statistiques Clés</h4>
+                            <div className="grid grid-cols-1 gap-4">
+                              {[
+                                { label: 'Nouveaux Clients', value: report.stats.newUsers, icon: Users, color: 'text-blue-600' },
+                                { label: 'Nouveaux Livreurs', value: report.stats.newDrivers, icon: Truck, color: 'text-benin-yellow' },
+                                { label: 'Commandes Totales', value: report.stats.totalOrders, icon: ShoppingBag, color: 'text-benin-green' },
+                                { label: 'Chiffre d\'Affaires', value: `${report.stats.totalRevenue} FCFA`, icon: TrendingUp, color: 'text-benin-red' },
+                                { label: 'Litiges', value: report.stats.disputesCount, icon: AlertCircle, color: 'text-orange-600' },
+                              ].map((stat, i) => (
+                                <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                  <div className="flex items-center gap-3">
+                                    <stat.icon className={`w-4 h-4 ${stat.color}`} />
+                                    <span className="text-xs font-black text-slate-900">{stat.label}</span>
+                                  </div>
+                                  <span className="text-sm font-black text-slate-900">{stat.value}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="lg:col-span-2 space-y-8">
+                            <div className="flex items-center gap-3">
+                              <Sparkles className="w-6 h-6 text-benin-yellow" />
+                              <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Conseils de l'IA</h4>
+                            </div>
+                            <div className="p-8 bg-slate-900 rounded-[32px] text-white relative overflow-hidden">
+                              <div className="absolute top-0 right-0 p-8 opacity-10">
+                                <Sparkles className="w-32 h-32" />
+                              </div>
+                              <div className="relative z-10 prose prose-invert prose-sm max-w-none">
+                                <div className="whitespace-pre-line text-slate-300 font-medium leading-relaxed">
+                                  {report.advice}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+
+                    {reports.length === 0 && (
+                      <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-20 text-center space-y-6">
+                        <div className="w-24 h-24 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
+                          <FileText className="w-12 h-12 text-slate-200" />
+                        </div>
+                        <div className="max-w-xs mx-auto">
+                          <h3 className="text-xl font-black text-slate-900">Aucun rapport</h3>
+                          <p className="text-sm text-slate-500 font-medium">Cliquez sur le bouton ci-dessus pour générer votre premier rapport d'analyse IA.</p>
                         </div>
                       </div>
                     )}
@@ -1704,7 +1894,7 @@ export default function BackOffice() {
                 <p className="text-sm text-slate-600 font-medium leading-relaxed">
                   Êtes-vous sûr de vouloir supprimer définitivement le compte de <span className="font-black text-slate-900">{selectedUserToDelete.displayName || selectedUserToDelete.email}</span> ?
                   <br /><br />
-                  Toutes ses données personnelles, documents et fichiers seront effacés. Les commandes seront conservées anonymement.
+                  Cette action est irréversible. Toutes les données associées (images, avis, messages) seront effacées.
                 </p>
               </div>
 

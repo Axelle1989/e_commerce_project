@@ -16,6 +16,8 @@ import BackOffice from './pages/BackOffice';
 import Login from './pages/Login';
 import Profile from './pages/Profile';
 import Landing from './pages/Landing';
+import Register from './pages/Register';
+import VerifyCode from './pages/VerifyCode';
 
 // Components
 import Layout from './components/Layout';
@@ -146,21 +148,24 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={!user ? <Login /> : (
+        <Route path="/login" element={!user || user.status === 'pending_email_verification' ? <Login /> : (
           user.role === 'admin' ? <Navigate to="/admin" /> :
           user.role === 'driver' ? (user.status === 'active' ? <Navigate to="/livreur" /> : <Navigate to="/onboarding" />) :
           <Navigate to="/client" />
         )} />
         
+        <Route path="/register" element={<Register />} />
+        <Route path="/verify" element={<VerifyCode />} />
+        
         <Route path="/" element={
-          !user ? <Landing /> : (
+          !user || user.status === 'pending_email_verification' ? <Landing /> : (
             user.role === 'admin' ? <Navigate to="/admin" /> :
             user.role === 'driver' ? (user.status === 'active' ? <Navigate to="/livreur" /> : <Navigate to="/onboarding" />) :
             <Navigate to="/client" />
           )
         } />
 
-        <Route element={<PrivateRoute user={user} loading={loading}><Layout user={user} /></PrivateRoute>}>
+        <Route element={<PrivateRoute user={user && user.status !== 'pending_email_verification' ? user : null} loading={loading}><Layout user={user} /></PrivateRoute>}>
           <Route path="/client" element={user?.role === 'client' ? <UserHome /> : <Navigate to="/" />} />
           <Route path="/payment" element={<Payment />} />
           <Route path="/suivi-commande/:orderId" element={<SuiviCommande />} />

@@ -4,24 +4,28 @@ import path from "path";
 import Stripe from "stripe";
 import dotenv from "dotenv";
 import { initializeApp, getApps, getApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { getStorage } from "firebase-admin/storage";
+
+import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
 
 dotenv.config();
 
 // Initialize Firebase Admin
 if (!getApps().length) {
   try {
+    console.log("Initializing Firebase Admin with Project ID:", firebaseConfig.projectId);
     initializeApp({
-      projectId: process.env.VITE_FIREBASE_PROJECT_ID || "ai-studio-applet-webapp-42c27",
+      projectId: firebaseConfig.projectId,
     });
+    console.log("Firebase Admin initialized successfully");
   } catch (error) {
     console.error("Firebase Admin initialization error:", error);
   }
 }
 
-const db = getFirestore();
+const db = getFirestore(firebaseConfig.firestoreDatabaseId);
 const auth = getAuth();
 const storage = getStorage();
 
@@ -69,30 +73,87 @@ async function startServer() {
       const targetUserData = targetUserDoc.data();
 
       // 5. Delete from Firebase Auth
-      await auth.deleteUser(targetUid);
+      let authDeleted = false;
+      try {
+        await auth.deleteUser(targetUid);
+        authDeleted = true;
+      } catch (authError: any) {
+        if (authError.code === 'auth/user-not-found') {
+          console.warn(`User ${targetUid} not found in Firebase Auth, continuing with Firestore cleanup.`);
+        } else {
+          console.error("Auth deletion failed, proceeding with Firestore deactivation:", authError.message);
+        }
+      }
 
-      // 6. Update associated orders
-      const ordersSnapshot = await db.collection("orders").where("userId", "==", targetUid).get();
-      const batch = db.batch();
-      ordersSnapshot.docs.forEach(doc => {
-        batch.update(doc.ref, { 
-          userId: null, 
-          userDeleted: true,
-          userOriginalInfo: {
-            displayName: targetUserData?.displayName || "Compte supprimé",
-            email: targetUserData?.email || "supprimé"
-          }
+      // 6. Set Admin Custom Claim (as requested in step 4)
+      try {
+        await auth.setCustomUserClaims(adminUid, { admin: true });
+      } catch (claimError: any) {
+        console.warn("Could not set admin claim:", claimError.message);
+      }
+
+      // 7. Resilient Firestore Updates (Sequential to identify failures)
+      try {
+        // Update associated orders (as Client)
+        const ordersSnapshot = await db.collection("orders").where("userId", "==", targetUid).get();
+        for (const doc of ordersSnapshot.docs) {
+          await doc.ref.update({ 
+            userId: "deleted_user", 
+            userDeleted: true,
+            userOriginalInfo: {
+              displayName: targetUserData?.displayName || "Compte supprimé",
+              email: targetUserData?.email || "supprimé"
+            }
+          });
+        }
+
+        // Update associated orders (as Driver)
+        const driverOrdersSnapshot = await db.collection("orders").where("driverId", "==", targetUid).get();
+        for (const doc of driverOrdersSnapshot.docs) {
+          await doc.ref.update({ 
+            driverId: "deleted_driver",
+            driverDeleted: true,
+            driverOriginalName: targetUserData?.displayName || "Livreur supprimé"
+          });
+        }
+
+        // Delete associated reviews
+        const reviewsSnapshot = await db.collection("reviews").where("userId", "==", targetUid).get();
+        for (const doc of reviewsSnapshot.docs) { await doc.ref.delete(); }
+        const driverReviewsSnapshot = await db.collection("reviews").where("driverId", "==", targetUid).get();
+        for (const doc of driverReviewsSnapshot.docs) { await doc.ref.delete(); }
+
+        // Delete associated chats
+        const chatsSnapshot = await db.collection("chats").where("livreurId", "==", targetUid).get();
+        for (const doc of chatsSnapshot.docs) { await doc.ref.delete(); }
+
+        // 8. Final User Document Update (Deactivation/Soft Delete)
+        // We use set with merge: true to be extremely resilient
+        await db.collection("users").doc(targetUid).set({
+          status: 'suspended',
+          active: false,
+          suspended: true,
+          isDeleted: true,
+          deletedAt: FieldValue.serverTimestamp(),
+          adminNote: "Supprimé/Désactivé par l'administrateur"
+        }, { merge: true });
+
+        // 9. Log the action
+        await db.collection("admin_logs").add({
+          adminId: adminUid,
+          targetUserId: targetUid,
+          targetUserEmail: targetUserData?.email || "inconnu",
+          action: "delete_user_account",
+          timestamp: FieldValue.serverTimestamp()
         });
-      });
-      await batch.commit();
 
-      // 7. Delete Firestore user document
-      await db.collection("users").doc(targetUid).delete();
+      } catch (firestoreError: any) {
+        console.error("Firestore cleanup error:", firestoreError);
+        // We don't throw here to allow the response to return what was done
+      }
 
-      // 8. Delete Storage files (avatars, ID cards)
-      // Note: In a real app, we'd list files in the user's folder.
-      // Firebase Admin Storage SDK requires bucket name.
-      const bucket = storage.bucket(process.env.VITE_FIREBASE_STORAGE_BUCKET || "ai-studio-applet-webapp-42c27.firebasestorage.app");
+      // 10. Delete Storage files (avatars, ID cards)
+      const bucket = storage.bucket(firebaseConfig.storageBucket || "ai-studio-applet-webapp-42c27.firebasestorage.app");
       try {
         await bucket.deleteFiles({ prefix: `users/${targetUid}/` });
       } catch (storageError) {
@@ -145,7 +206,7 @@ async function startServer() {
       await db.collection("users").doc(uid).delete();
 
       // 6. Delete Storage files
-      const bucketName = process.env.VITE_FIREBASE_STORAGE_BUCKET || "ai-studio-applet-webapp-42c27.firebasestorage.app";
+      const bucketName = firebaseConfig.storageBucket || "ai-studio-applet-webapp-42c27.firebasestorage.app";
       const bucket = storage.bucket(bucketName);
       try {
         await bucket.deleteFiles({ prefix: `users/${uid}/` });
@@ -156,6 +217,49 @@ async function startServer() {
       res.json({ success: true, message: "Account deleted successfully" });
     } catch (error: any) {
       console.error("Refuse interview error:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin: Get monthly stats for report
+  app.post("/api/admin/monthly-stats", async (req, res) => {
+    try {
+      const { month, year, adminUid, idToken } = req.body;
+
+      if (!month || !year || !adminUid || !idToken) {
+        return res.status(400).json({ error: "Missing parameters" });
+      }
+
+      // 1. Verify admin token
+      const decodedToken = await auth.verifyIdToken(idToken);
+      if (decodedToken.uid !== adminUid) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+
+      // 2. Verify admin role
+      const adminDoc = await db.collection("users").doc(adminUid).get();
+      if (!adminDoc.exists || adminDoc.data()?.role !== "admin") {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      // 3. Calculate stats
+      const usersSnapshot = await db.collection("users").get();
+      const ordersSnapshot = await db.collection("orders").get();
+      const disputesSnapshot = await db.collection("disputes").get();
+
+      const stats = {
+        newUsers: usersSnapshot.docs.filter(d => d.data().role === 'client').length,
+        newDrivers: usersSnapshot.docs.filter(d => d.data().role === 'driver').length,
+        totalOrders: ordersSnapshot.size,
+        deliveredOrders: ordersSnapshot.docs.filter(d => d.data().status === 'delivered').length,
+        cancelledOrders: ordersSnapshot.docs.filter(d => d.data().status === 'cancelled').length,
+        totalRevenue: ordersSnapshot.docs.filter(d => d.data().status === 'delivered').reduce((acc, d) => acc + (d.data().totalAmount || 0), 0),
+        disputesCount: disputesSnapshot.size
+      };
+
+      res.json({ stats });
+    } catch (error: any) {
+      console.error("Monthly stats error:", error);
       res.status(500).json({ error: error.message });
     }
   });
