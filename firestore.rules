@@ -1,67 +1,11 @@
 rules_version = '2';
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-    
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    function isAdmin() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         request.auth.token.email == 'axo.hossou@epitech.eu');
-    }
-
-    match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow write: if isOwner(userId) || isAdmin();
-    }
-
-    match /pending_verifications/{versionId} {
-      allow create: if true;
-      allow read, delete: if true; // Client needs to verify code and then cleanup
-    }
-    
-    match /orders/{orderId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid || resource.data.driverId == request.auth.uid || isAdmin());
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated();
-      allow delete: if isAdmin();
-    }
-    
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if isAuthenticated();
-      allow update, delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
-    }
-
-    match /disputes/{disputeId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    match /admin_notifications/{notifId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    match /notifications/{notifId} {
-      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
-      allow write: if isAuthenticated();
-    }
-
-    match /admin_logs/{logId} {
-      allow read, write: if isAdmin();
-    }
-
-    match /admin_reports/{reportId} {
-      allow read, write: if isAdmin();
-    }
-
+    // MODE DÉVELOPPEMENT OUVERT : Permet à n'importe qui de lire et d'écrire sur toute la base.
+    // À restreindre impérativement avant la mise en production.
     match /{document=**} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if true;
     }
   }
 }
