@@ -1,46 +1,40 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { 
-  createUserWithEmailAndPassword, 
   signInWithPhoneNumber, 
   RecaptchaVerifier,
   ConfirmationResult
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { serverTimestamp, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { Truck, User, Mail, Phone, Lock, ArrowRight, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { Truck, User, Mail, Phone, Lock, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { motion } from 'motion/react';
+import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
+import 'react-phone-number-input/style.css';
 
 export default function Register() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<'email' | 'phone'>('email');
   const [role, setRole] = useState<'client' | 'driver'>('client');
   const [email, setEmail] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('+229');
+  const [phoneNumber, setPhoneNumber] = useState<string | undefined>('+22901');
   const [nom, setNom] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
-  const [verificationId, setVerificationId] = useState<string | null>(null);
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-
   useEffect(() => {
     // Hidden recaptcha for phone auth
     if (mode === 'phone' && !window.recaptchaVerifier) {
       window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
         'size': 'invisible',
         'callback': () => {
-          // reCAPTCHA solved, allow signInWithPhoneNumber.
+          // reCAPTCHA solved
         }
       });
     }
   }, [mode]);
-
-  const validatePhone = (p: string) => {
-    return /^\+229\d{8}$/.test(p.replace(/\s/g, ''));
-  };
 
   const handleRegisterInput = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,16 +47,29 @@ export default function Register() {
       return;
     }
 
-    if (mode === 'phone' && !validatePhone(phoneNumber)) {
-      setError("Format de numéro invalide. Utilisez +229 XX XX XX XX");
-      setLoading(false);
-      return;
+    if (mode === 'phone') {
+      if (!phoneNumber || !isValidPhoneNumber(phoneNumber)) {
+        setError("Format de numéro invalide.");
+        setLoading(false);
+        return;
+      }
+      
+      const digits = phoneNumber.replace(/\D/g, '');
+      if (digits.startsWith('229')) {
+        if (digits.length !== 13 || !digits.startsWith('22901')) {
+           setError("Veuillez utiliser le nouveau format béninois : +229 01 XX XX XX XX");
+           setLoading(false);
+           return;
+        }
+      }
     }
 
     try {
-      // 1. Check if user already exists in Firestore
+      // 1. Check if user already exists in Firestore users or auth
+      // (Auth check usually happens during signIn/createUser call, but we check Firestore first)
       const usersRef = collection(db, 'users');
-      const q = query(usersRef, where(mode === 'email' ? 'email' : 'phone', '==', mode === 'email' ? email : phoneNumber));
+      const normalizedPhone = mode === 'phone' ? phoneNumber?.replace(/\s/g, '') : null;
+      const q = query(usersRef, where(mode === 'email' ? 'email' : 'phone', '==', mode === 'email' ? email : normalizedPhone));
       const querySnapshot = await getDocs(q);
       
       if (!querySnapshot.empty) {
@@ -84,35 +91,30 @@ export default function Register() {
           createdAt: serverTimestamp()
         });
 
-        // Simuler l'envoi
         console.log(`[DEMO] Code de vérification envoyé à ${email}: ${code}`);
         alert(`[DEMO] Pour l'email ${email}, votre code est : ${code}`);
         
-        // Rediriger vers la page de vérification
         navigate('/verify', { state: { verificationId: pendingRef.id, email, mode: 'email' } });
       } else {
         // Phone Auth with Firebase
         const appVerifier = window.recaptchaVerifier;
-        const result = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
+        const result = await signInWithPhoneNumber(auth, phoneNumber!, appVerifier);
         
-        // Save user data temporarily because signInWithPhoneNumber doesn't support passwords or extra fields natively
         const expiresAt = new Date(Date.now() + 10 * 60000);
         const pendingRef = await addDoc(collection(db, 'pending_verifications'), {
-          phone: phoneNumber,
+          phone: phoneNumber?.replace(/\s/g, ''),
           expiresAt,
           userData: { nom, role, password },
           createdAt: serverTimestamp()
         });
 
-        // Result will be used in VerifyCode
-        // We'll store the confirmationResult in window for easy access between pages (simpler than complex state for now)
         window.confirmationResult = result;
         
         navigate('/verify', { state: { verificationId: pendingRef.id, phone: phoneNumber, mode: 'phone' } });
       }
     } catch (err: any) {
       console.error('Registration Error:', err);
-      setError(err.message || "Une erreur est survenue lors de l'envoi du code.");
+      setError(err.message || "Une erreur est survenue.");
     } finally {
       setLoading(false);
     }
@@ -133,7 +135,7 @@ export default function Register() {
           </div>
           <div className="space-y-2 text-center">
             <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Inscription</h1>
-            <p className="text-slate-500 font-medium text-sm">Créez votre compte en quelques secondes.</p>
+            <p className="text-slate-500 font-medium text-sm">CourseExpress : Livraisons rapides.</p>
           </div>
         </div>
 
@@ -159,10 +161,9 @@ export default function Register() {
           </button>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleRegisterInput} className="space-y-5">
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Voulez-vous :</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Je souhaite :</label>
             <div className="flex gap-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input 
@@ -190,7 +191,7 @@ export default function Register() {
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nom complet</label>
             <div className="relative">
-              <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 z-10" />
               <input
                 type="text"
                 required
@@ -206,7 +207,7 @@ export default function Register() {
             <div className="space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Adresse Email</label>
               <div className="relative">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 z-10" />
                 <input
                   type="email"
                   required
@@ -219,16 +220,15 @@ export default function Register() {
             </div>
           ) : (
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Numéro de téléphone</label>
-              <div className="relative">
-                <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="tel"
-                  required
-                  placeholder="+229 XX XX XX XX"
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Numéro de téléphone (Bénin)</label>
+              <div className="phone-input-container">
+                <PhoneInput
+                  international
+                  defaultCountry="BJ"
                   value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:ring-2 focus:ring-benin-green outline-none transition-all"
+                  onChange={setPhoneNumber}
+                  className="w-full pl-4 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus-within:ring-2 focus-within:ring-benin-green transition-all"
+                  placeholder="+229 01 XX XX XX XX"
                 />
               </div>
             </div>
@@ -237,7 +237,7 @@ export default function Register() {
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mot de passe</label>
             <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 z-10" />
               <input
                 type={showPassword ? "text" : "password"}
                 required
@@ -249,14 +249,14 @@ export default function Register() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 z-10"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
           </div>
 
-          {error && <p className="text-xs font-black text-benin-red text-center uppercase tracking-widest">{error}</p>}
+          {error && <p className="text-xs font-black text-benin-red text-center uppercase tracking-widest leading-relaxed">{error}</p>}
 
           <button
             type="submit"
@@ -274,15 +274,30 @@ export default function Register() {
           </button>
         </form>
 
-        <div className="mt-8 text-center">
+        <div className="mt-8 text-center border-t border-slate-50 pt-8">
           <p className="text-xs font-medium text-slate-400">
             Déjà un compte ?{' '}
-            <Link to="/login" className="text-benin-green font-black uppercase tracking-widest hover:underline">
+            <Link to="/login" className="text-benin-green font-black uppercase tracking-widest hover:underline ml-1">
               Se connecter
             </Link>
           </p>
         </div>
       </motion.div>
+
+      <style>{`
+        .phone-input-container .PhoneInputInput {
+          background: transparent;
+          border: none;
+          outline: none;
+          width: 100%;
+          font-weight: 500;
+          color: #0f172a;
+          margin-left: 10px;
+        }
+        .phone-input-container .PhoneInputCountry {
+          margin-right: 10px;
+        }
+      `}</style>
     </div>
   );
 }
