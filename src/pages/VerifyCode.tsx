@@ -15,11 +15,13 @@ import {
 import { auth, db } from '../firebase';
 import { CheckCircle2, ArrowRight, ShieldCheck, Loader2, RefreshCw } from 'lucide-react';
 import { motion } from 'motion/react';
+import { verifyOTPCode, sendVerificationCode } from '../services/verificationService';
 
 export default function VerifyCode() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { verificationId, email, phone, mode } = location.state || {};
+  const { contact, mode, userData } = location.state || {};
+  const { email, phone } = mode === 'email' ? { email: contact, phone: null } : { email: null, phone: contact };
 
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,10 +30,10 @@ export default function VerifyCode() {
   const [resendTimer, setResendTimer] = useState(60);
 
   useEffect(() => {
-    if (!verificationId && mode !== 'phone') {
+    if (!contact || !mode || !userData) {
       navigate('/register');
     }
-  }, [verificationId, mode, navigate]);
+  }, [contact, mode, userData, navigate]);
 
   useEffect(() => {
     let timer: any;
@@ -41,11 +43,18 @@ export default function VerifyCode() {
     return () => clearInterval(timer);
   }, [resendTimer]);
 
-  const handleResend = () => {
+  const handleResend = async () => {
     if (resendTimer > 0) return;
-    setResendTimer(60);
-    alert("Un nouveau code a été envoyé !");
-    // In a real app, you would trigger the Firebase or EmailJS send logic here again.
+    try {
+      setLoading(true);
+      await sendVerificationCode(contact, mode);
+      setResendTimer(60);
+      alert("Un nouveau code a été envoyé !");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleVerify = async (e: React.FormEvent) => {
@@ -54,103 +63,45 @@ export default function VerifyCode() {
     setError('');
 
     try {
-      if (mode === 'email') {
-        const pendingRef = doc(db, 'pending_verifications', verificationId);
-        const pendingSnap = await getDoc(pendingRef);
+      // 1. Appeler l'API de vérification personnalisée
+      await verifyOTPCode(contact, code);
 
-        if (!pendingSnap.exists()) {
-          setError("Session de vérification expirée.");
-          setLoading(false);
-          return;
-        }
+      // 2. Si succès, finaliser la création du compte dans Firebase
+      const { nom, role, password } = userData;
+      
+      // On utilise le mail si disponible, sinon on crée un mail fictif basé sur le tel pour Firebase Auth
+      // (Ou on peut adapter selon si on veut une auth Firebase purely phone/email)
+      const firebaseEmail = mode === 'email' ? email! : `${contact}@courseexpress.bj`;
+      
+      const userCred = await createUserWithEmailAndPassword(auth, firebaseEmail, password);
+      const user = userCred.user;
 
-        const data = pendingSnap.data();
-        if (code !== data.code) {
-          setError("Code de vérification incorrect.");
-          setLoading(false);
-          return;
-        }
+      await updateProfile(user, { displayName: nom });
 
-        const { nom, role, password } = data.userData;
-        const userCred = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCred.user;
+      await setDoc(doc(db, 'users', user.uid), {
+        uid: user.uid,
+        email: mode === 'email' ? email : null,
+        phone: mode === 'phone' ? contact : null,
+        displayName: nom,
+        role: role,
+        status: role === 'driver' ? 'pending_validation' : 'active',
+        emailVerified: mode === 'email',
+        phoneVerified: mode === 'phone',
+        createdAt: serverTimestamp()
+      });
 
-        await updateProfile(user, { displayName: nom });
-
-        await setDoc(doc(db, 'users', user.uid), {
-          uid: user.uid,
-          email: user.email,
-          displayName: nom,
-          role: role,
-          status: role === 'driver' ? 'pending_validation' : 'active',
-          emailVerified: true,
-          phoneVerified: false,
-          createdAt: serverTimestamp()
-        });
-
-        await deleteDoc(pendingRef);
-        setSuccess(true);
-        setTimeout(() => navigate('/'), 2000);
-      } else {
-        // Phone Verification
-        if (!window.confirmationResult) {
-          setError("Session expirée. Veuillez réessayer de vous connecter.");
-          setLoading(false);
-          return;
-        }
-
-        const result = await window.confirmationResult.confirm(code);
-        const user = result.user;
-
-        // Check if this is a registration or just a login
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        
-        if (!userDoc.exists() && verificationId) {
-          // Registration flow
-          const pendingRef = doc(db, 'pending_verifications', verificationId);
-          const pendingSnap = await getDoc(pendingRef);
-          
-          if (pendingSnap.exists()) {
-            const data = pendingSnap.data();
-            const { nom, role } = data.userData;
-
-            await setDoc(doc(db, 'users', user.uid), {
-              uid: user.uid,
-              phone: user.phoneNumber,
-              displayName: nom,
-              role: role,
-              status: role === 'driver' ? 'pending_validation' : 'active',
-              emailVerified: false,
-              phoneVerified: true,
-              createdAt: serverTimestamp()
-            });
-
-            await deleteDoc(pendingRef);
-          }
-        }
-
-        setSuccess(true);
-        setTimeout(() => navigate('/'), 2000);
-      }
+      setSuccess(true);
+      setTimeout(() => navigate('/'), 2000);
     } catch (err: any) {
       console.error('Verification error:', err);
       let message = "Une erreur est survenue lors de la vérification.";
       
-      switch (err.code) {
-        case 'auth/invalid-verification-code':
-          message = "Le code saisi est incorrect.";
-          break;
-        case 'auth/operation-not-allowed':
-          message = "La connexion par Email/Mot de passe n'est pas activée dans la console Firebase. Veuillez contacter l'administrateur.";
-          break;
-        case 'auth/email-already-in-use':
-          message = "Cette adresse email est déjà utilisée par un autre compte.";
-          break;
-        case 'auth/weak-password':
-          message = "Le mot de passe est trop faible.";
-          break;
-        default:
-          message = err.message || message;
+      if (err.message === "Code invalide") {
+        message = "Le code saisi est incorrect.";
+      } else if (err.code === 'auth/email-already-in-use') {
+        message = "Cette adresse email (ou téléphone lié) est déjà utilisée.";
+      } else {
+        message = err.message || message;
       }
       
       setError(message);

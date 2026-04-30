@@ -11,6 +11,7 @@ import { Truck, User, Mail, Phone, Lock, ArrowRight, Eye, EyeOff } from 'lucide-
 import { motion } from 'motion/react';
 import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
 import 'react-phone-number-input/style.css';
+import { sendVerificationCode } from '../services/verificationService';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -79,42 +80,24 @@ export default function Register() {
       }
 
       if (mode === 'email') {
-        // Envoi du code par Email (Simulé avec Firestore + Alert pour la démo)
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
-        const expiresAt = new Date(Date.now() + 10 * 60000); // 10 mins
-
-        const pendingRef = await addDoc(collection(db, 'pending_verifications'), {
-          email,
-          code,
-          expiresAt,
-          userData: { nom, role, password },
-          createdAt: serverTimestamp()
+        await sendVerificationCode(email, 'email');
+        navigate('/verify', { 
+          state: { 
+            contact: email, 
+            mode: 'email', 
+            userData: { nom, role, password } 
+          } 
         });
-
-        console.log(`[DEMO] Code de vérification envoyé à ${email}: ${code}`);
-        // Information about the simulation for the user
-        alert(`[INFO] Pour cette démonstration, le code envoyé à votre email ${email} est : ${code}`);
-        
-        navigate('/verify', { state: { verificationId: pendingRef.id, email, mode: 'email' } });
       } else {
-        // Phone Auth with Firebase
-        // Normalize phone number: remove any non-digit except '+'
         const normalizedPhone = phoneNumber!.replace(/[^\d+]/g, '');
-        
-        const appVerifier = window.recaptchaVerifier;
-        const result = await signInWithPhoneNumber(auth, normalizedPhone, appVerifier);
-        
-        const expiresAt = new Date(Date.now() + 10 * 60000);
-        const pendingRef = await addDoc(collection(db, 'pending_verifications'), {
-          phone: normalizedPhone,
-          expiresAt,
-          userData: { nom, role, password },
-          createdAt: serverTimestamp()
+        await sendVerificationCode(normalizedPhone, 'phone');
+        navigate('/verify', { 
+          state: { 
+            contact: normalizedPhone, 
+            mode: 'phone', 
+            userData: { nom, role, password } 
+          } 
         });
-
-        window.confirmationResult = result;
-        
-        navigate('/verify', { state: { verificationId: pendingRef.id, phone: normalizedPhone, mode: 'phone' } });
       }
     } catch (err: any) {
       console.error('Registration Error:', err);
