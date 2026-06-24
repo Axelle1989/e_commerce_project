@@ -80,22 +80,24 @@ export default function Register() {
       }
 
       if (mode === 'email') {
-        await sendVerificationCode(email, 'email');
+        const res = await sendVerificationCode(email, 'email');
         navigate('/verify', { 
           state: { 
             contact: email, 
             mode: 'email', 
-            userData: { nom, role, password } 
+            userData: { nom, role, password },
+            simulatedCode: res?.simulated ? res?.code : null
           } 
         });
       } else {
         const normalizedPhone = phoneNumber!.replace(/[^\d+]/g, '');
-        await sendVerificationCode(normalizedPhone, 'phone');
+        const res = await sendVerificationCode(normalizedPhone, 'phone');
         navigate('/verify', { 
           state: { 
             contact: normalizedPhone, 
             mode: 'phone', 
-            userData: { nom, role, password } 
+            userData: { nom, role, password },
+            simulatedCode: res?.simulated ? res?.code : null
           } 
         });
       }

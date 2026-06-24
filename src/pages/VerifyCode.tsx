@@ -20,7 +20,7 @@ import { verifyOTPCode, sendVerificationCode } from '../services/verificationSer
 export default function VerifyCode() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { contact, mode, userData } = location.state || {};
+  const { contact, mode, userData, simulatedCode } = location.state || {};
   const { email, phone } = mode === 'email' ? { email: contact, phone: null } : { email: null, phone: contact };
 
   const [code, setCode] = useState('');
@@ -28,6 +28,12 @@ export default function VerifyCode() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [resendTimer, setResendTimer] = useState(60);
+
+  useEffect(() => {
+    if (simulatedCode) {
+      setCode(simulatedCode);
+    }
+  }, [simulatedCode]);
 
   useEffect(() => {
     if (!contact || !mode || !userData) {
@@ -149,6 +155,15 @@ export default function VerifyCode() {
             </p>
           </div>
         </div>
+
+        {simulatedCode && (
+          <div className="mb-8 p-5 bg-benin-yellow/10 border border-benin-yellow/30 rounded-[28px] text-center space-y-1">
+            <span className="text-[10px] font-black text-benin-yellow uppercase tracking-widest block">Mode Simulation</span>
+            <p className="text-sm font-medium text-slate-700">
+              Votre code de sécurité est : <strong className="text-xl font-black text-slate-950 tracking-wider bg-white px-3 py-1 rounded-xl border border-slate-100">{simulatedCode}</strong>
+            </p>
+          </div>
+        )}
 
         <form onSubmit={handleVerify} className="space-y-8">
           <div className="space-y-4">

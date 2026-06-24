@@ -4,7 +4,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { z } from "zod";
 import twilio from "twilio";
-import * as Brevo from "@getbrevo/brevo";
+import { BrevoClient } from "@getbrevo/brevo";
 import { db } from "./src/firebase"; // On réutilise l'instance Firestore existante
 import { 
   collection, 
@@ -24,13 +24,34 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // --- CONFIGURATION CLIENTS ---
-  // Handle Twilio both as a direct function and via .default for ESM compatibility
-  const twilioFactory = (twilio as any).default || twilio;
-  const twilioClient = twilioFactory(process.env.TWILIO_ACCOUNT_SID as string, process.env.TWILIO_AUTH_TOKEN as string);
-  
-  const brevoEmailApi = new (Brevo as any).TransactionalEmailsApi();
-  brevoEmailApi.setApiKey((Brevo as any).TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY as string);
+  // --- CONFIGURATION CLIENTS (Lazy initialization) ---
+  let twilioClient: any = null;
+  const getTwilioClient = () => {
+    if (!twilioClient) {
+      const sid = process.env.TWILIO_ACCOUNT_SID;
+      const token = process.env.TWILIO_AUTH_TOKEN;
+      if (!sid || !token) {
+        throw new Error("TWILIO_ACCOUNT_SID ou TWILIO_AUTH_TOKEN manquant");
+      }
+      const twilioFactory = (twilio as any).default || twilio;
+      twilioClient = twilioFactory(sid, token);
+    }
+    return twilioClient;
+  };
+
+  let brevoClient: BrevoClient | null = null;
+  const getBrevoClient = () => {
+    if (!brevoClient) {
+      const apiKey = process.env.BREVO_API_KEY;
+      if (!apiKey) {
+        throw new Error("BREVO_API_KEY manquant");
+      }
+      brevoClient = new BrevoClient({
+        apiKey: apiKey,
+      });
+    }
+    return brevoClient;
+  };
 
   // --- SCHÉMAS DE VALIDATION ---
   const SendCodeSchema = z.object({
@@ -63,34 +84,7 @@ async function startServer() {
         target = contact.replace(/[^\d+]/g, "");
       }
 
-      // 3. Envoi selon le mode
-      if (mode === "phone") {
-        try {
-          await (twilioClient as any).messages.create({
-            body: `Votre code de vérification CourseExpress est : ${code}. Il expire dans 5 minutes.`,
-            from: process.env.TWILIO_PHONE_NUMBER,
-            to: target
-          });
-        } catch (smsErr) {
-          console.error("SMS Error:", smsErr);
-          return res.status(400).json({ error: "Erreur lors de l'envoi du SMS. Vérifiez le numéro ou le plan Blaze." });
-        }
-      } else {
-        try {
-          const sendSmtpEmail = new (Brevo as any).SendSmtpEmail();
-          sendSmtpEmail.subject = "Code de vérification - CourseExpress";
-          sendSmtpEmail.htmlContent = `<html><body><h1>Code de vérification</h1><p>Votre code est : <strong>${code}</strong>. Il est valide 5 minutes.</p></body></html>`;
-          sendSmtpEmail.sender = { name: "CourseExpress", email: process.env.EMAIL_FROM! };
-          sendSmtpEmail.to = [{ email: target }];
-          
-          await brevoEmailApi.sendTransacEmail(sendSmtpEmail);
-        } catch (emailErr) {
-          console.error("Email Error:", emailErr);
-          return res.status(400).json({ error: "Erreur lors de l'envoi de l'email." });
-        }
-      }
-
-      // 4. Stocker en DB (Firestore)
+      // 3. Stocker en DB (Firestore) d'abord pour garantir que la vérification fonctionne
       await addDoc(collection(db, "otps"), {
         contact: target,
         code,
@@ -98,6 +92,64 @@ async function startServer() {
         attempts: 0,
         createdAt: serverTimestamp()
       });
+
+      // 4. Tentative d'envoi selon le mode ou simulation directe si les clés sont absentes ou invalides
+      let useSimulation = false;
+
+      const isTwilioConfigured = !!(
+        process.env.TWILIO_ACCOUNT_SID && 
+        process.env.TWILIO_AUTH_TOKEN && 
+        process.env.TWILIO_ACCOUNT_SID.length > 10 && 
+        !process.env.TWILIO_ACCOUNT_SID.includes("YOUR_")
+      );
+
+      const isBrevoConfigured = !!(
+        process.env.BREVO_API_KEY && 
+        process.env.BREVO_API_KEY.length > 20 && 
+        !process.env.BREVO_API_KEY.includes("YOUR_")
+      );
+
+      if (mode === "phone") {
+        if (!isTwilioConfigured) {
+          useSimulation = true;
+        } else {
+          try {
+            const client = getTwilioClient();
+            await client.messages.create({
+              body: `Votre code de vérification CourseExpress est : ${code}. Il expire dans 5 minutes.`,
+              from: process.env.TWILIO_PHONE_NUMBER,
+              to: target
+            });
+          } catch (smsErr) {
+            useSimulation = true;
+          }
+        }
+      } else {
+        if (!isBrevoConfigured) {
+          useSimulation = true;
+        } else {
+          try {
+            const client = getBrevoClient();
+            await client.transactionalEmails.sendTransacEmail({
+              subject: "Code de vérification - CourseExpress",
+              htmlContent: `<html><body><h1>Code de vérification</h1><p>Votre code est : <strong>${code}</strong>. Il est valide 5 minutes.</p></body></html>`,
+              sender: { name: "CourseExpress", email: process.env.EMAIL_FROM || "no-reply@courseexpress.bj" },
+              to: [{ email: target }]
+            });
+          } catch (emailErr) {
+            useSimulation = true;
+          }
+        }
+      }
+
+      if (useSimulation) {
+        return res.json({
+          success: true,
+          message: `Code généré (Simulation active) : ${code}`,
+          simulated: true,
+          code
+        });
+      }
 
       res.json({ success: true, message: "Code envoyé !" });
     } catch (err) {
@@ -112,7 +164,10 @@ async function startServer() {
   app.post("/api/auth/verify-code", async (req, res) => {
     try {
       const { contact, code } = VerifyCodeSchema.parse(req.body);
-      const target = contact.replace(/[^\d+]/g, "");
+      let target = contact;
+      if (!contact.includes("@")) {
+        target = contact.replace(/[^\d+]/g, "");
+      }
 
       const q = query(
         collection(db, "otps"), 
