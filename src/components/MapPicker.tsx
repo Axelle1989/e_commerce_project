@@ -139,7 +139,7 @@ export default function MapPicker({ onLocationSelect, initialLocation }: MapPick
         setMarkerPosition(L.latLng(latitude, longitude));
         handleLocationSelect(latitude, longitude);
       }, (err) => {
-        console.error("MapPicker geolocation error:", err);
+        console.warn("MapPicker geolocation warning:", err.message);
       }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
     }
   };

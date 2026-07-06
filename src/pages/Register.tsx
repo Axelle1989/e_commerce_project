@@ -180,7 +180,7 @@ export default function Register() {
                   onChange={() => setRole('client')}
                   className="accent-benin-green"
                 />
-                <span className={`text-xs font-bold ${role === 'client' ? 'text-slate-900' : 'text-slate-400'}`}>Commander</span>
+                <span className={`text-xs font-bold ${role === 'client' ? 'text-slate-900' : 'text-slate-400'}`}>ÊTRE CLIENT</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input 
@@ -190,7 +190,7 @@ export default function Register() {
                   onChange={() => setRole('driver')}
                   className="accent-benin-green"
                 />
-                <span className={`text-xs font-bold ${role === 'driver' ? 'text-slate-900' : 'text-slate-400'}`}>Livrer</span>
+                <span className={`text-xs font-bold ${role === 'driver' ? 'text-slate-900' : 'text-slate-400'}`}>ÊTRE LIVREUR</span>
               </label>
             </div>
           </div>

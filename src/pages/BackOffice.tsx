@@ -164,7 +164,7 @@ export default function BackOffice() {
       const message: AdminChatMessage = {
         senderId: 'admin',
         text: newMessage.trim(),
-        timestamp: serverTimestamp(),
+        timestamp: new Date(),
         read: false
       };
 
@@ -1430,7 +1430,13 @@ export default function BackOffice() {
                                   </div>
                                   <div className={`flex items-center gap-2 px-2 ${isMe ? 'flex-row-reverse' : ''}`}>
                                     <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
-                                      {msg.timestamp?.seconds ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '...'}
+                                      {msg.timestamp?.seconds 
+                                        ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) 
+                                        : msg.timestamp instanceof Date 
+                                          ? msg.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                                          : typeof msg.timestamp === 'string'
+                                            ? new Date(msg.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                                            : '...'}
                                     </span>
                                   </div>
                                 </div>

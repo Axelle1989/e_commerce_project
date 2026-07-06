@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import path from "path";
@@ -136,7 +137,8 @@ async function startServer() {
               sender: { name: "CourseExpress", email: process.env.EMAIL_FROM || "no-reply@courseexpress.bj" },
               to: [{ email: target }]
             });
-          } catch (emailErr) {
+          } catch (emailErr: any) {
+            console.error("Erreur envoi Brevo:", emailErr?.body || emailErr?.message || emailErr);
             useSimulation = true;
           }
         }
@@ -218,6 +220,11 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Serveur multi-canal actif sur http://localhost:${PORT}`);
+    console.log(
+      process.env.BREVO_API_KEY
+        ? `✅ BREVO_API_KEY chargée (envoi d'email réel activé)`
+        : `⚠️  BREVO_API_KEY absente : les codes email seront simulés (affichés à l'écran, aucun vrai email envoyé)`
+    );
   });
 }
 

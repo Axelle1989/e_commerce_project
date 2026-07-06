@@ -123,7 +123,7 @@ export function useLiveLocation(status?: OrderStatus) {
       watchIdRef.current = navigator.geolocation.watchPosition(
         (pos) => handleNewPosition(pos),
         (err) => {
-          console.error("WatchPosition error, falling back to getCurrentPosition:", err);
+          console.warn("WatchPosition warning, falling back to getCurrentPosition:", err.message);
           // Fallback on error
           navigator.geolocation.getCurrentPosition(
             (pos) => handleNewPosition(pos),
@@ -139,7 +139,7 @@ export function useLiveLocation(status?: OrderStatus) {
       intervalIdRef.current = setInterval(() => {
         navigator.geolocation.getCurrentPosition(
           (pos) => handleNewPosition(pos),
-          (err) => console.error("Periodic getCurrentPosition error:", err),
+          (err) => console.warn("Periodic getCurrentPosition warning:", err.message),
           options
         );
       }, interval);

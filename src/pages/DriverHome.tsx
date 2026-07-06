@@ -147,11 +147,41 @@ export default function DriverHome() {
           if (auth.currentUser) {
             updateDoc(doc(db, 'users', auth.currentUser.uid), {
               currentLocation: newLoc
-            });
+            }).catch(() => {});
           }
         }, (err) => {
-          console.error("DriverHome geolocation error:", err);
+          console.warn("DriverHome geolocation warning (using fallback position):", err.message);
+          // Fallback location for simulation or iframe testing
+          setCurrentLocation((prev) => {
+            if (prev) return prev;
+            const fallbackLoc = {
+              latitude: 6.3654,
+              longitude: 2.4183,
+              accuracy: 20,
+              address: "Cotonou, Bénin",
+              updatedAt: new Date().toISOString()
+            };
+            if (auth.currentUser) {
+              updateDoc(doc(db, 'users', auth.currentUser.uid), {
+                currentLocation: fallbackLoc
+              }).catch(() => {});
+            }
+            return fallbackLoc;
+          });
+          // If permission denied or unavailable, stop frequent interval polling
+          if (err.code === 1 || err.code === 2) {
+            if (locationInterval.current) clearInterval(locationInterval.current);
+          }
         }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
+      } else {
+        const fallbackLoc = {
+          latitude: 6.3654,
+          longitude: 2.4183,
+          accuracy: 20,
+          address: "Cotonou, Bénin",
+          updatedAt: new Date().toISOString()
+        };
+        setCurrentLocation(fallbackLoc);
       }
     };
 
@@ -227,7 +257,7 @@ export default function DriverHome() {
       const message: AdminChatMessage = {
         senderId: auth.currentUser.uid,
         text: newMessage.trim(),
-        timestamp: serverTimestamp(),
+        timestamp: new Date(),
         read: false
       };
 
@@ -659,7 +689,13 @@ export default function DriverHome() {
                         </div>
                         <div className={`flex items-center gap-2 px-2 ${isMe ? 'flex-row-reverse' : ''}`}>
                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">
-                            {msg.timestamp?.seconds ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '...'}
+                            {msg.timestamp?.seconds 
+                              ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) 
+                              : msg.timestamp instanceof Date 
+                                ? msg.timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                                : typeof msg.timestamp === 'string'
+                                  ? new Date(msg.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+                                  : '...'}
                           </span>
                           {isMe && (
                             <span className={`text-[8px] font-black uppercase tracking-widest ${msg.read ? 'text-benin-green' : 'text-slate-300'}`}>
