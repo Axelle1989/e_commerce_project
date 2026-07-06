@@ -248,7 +248,7 @@ export default function UserHome() {
             {
               title: "1. Listez vos articles",
               desc: "Saisissez ce dont vous avez besoin, même sans prix fixe.",
-              img: "https://images.unsplash.com/photo-1543083477-4f785aeafaa9?auto=format&fit=crop&q=80&w=800"
+              img: BENIN_IMAGES.market.dantokpa
             },
             {
               title: "2. Proposez votre prix",
