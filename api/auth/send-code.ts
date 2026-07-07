@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { z } from 'zod';
 import twilio from 'twilio';
 import { BrevoClient } from '@getbrevo/brevo';
-import { db } from '../../src/firebase';
+import { db } from '../../src/firebase.js';
 import { collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 
 const SendCodeSchema = z.object({

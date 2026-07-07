@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { z } from 'zod';
-import { db } from '../../src/firebase';
+import { db } from '../../src/firebase.js';
 import { collection, query, where, getDocs, deleteDoc, Timestamp } from 'firebase/firestore';
 
 const VerifyCodeSchema = z.object({
