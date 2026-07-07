@@ -4,7 +4,7 @@ import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 // Import the Firebase configuration
-import firebaseConfigData from '../firebase-applet-config.json';
+import firebaseConfigData from '../firebase-applet-config.json' with { type: 'json' };
 
 const firebaseConfig = {
   apiKey: firebaseConfigData.apiKey || "PLACEHOLDER_API_KEY",
