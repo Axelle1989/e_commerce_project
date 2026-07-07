@@ -366,7 +366,7 @@ export default function BackOffice() {
       alert('Compte supprimé/désactivé avec succès');
     } catch (error: any) {
       console.error('Error deleting user:', error);
-      // alert(`Erreur: ${error.message}`);
+      alert(`Erreur : ${error.message}`);
     } finally {
       setDeletingUser(false);
     }
